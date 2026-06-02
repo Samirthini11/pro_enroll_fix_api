@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Pro-Enroll API (PHP)
 
 REST API for the **Pro-Enroll** Flutter app (`pro_enroll_v1`). Each Flutter screen has a matching PHP file under `api/screens/`. Protected routes require a **Firebase ID token** in the `Authorization` header.
@@ -113,3 +114,6 @@ pro_enroll_api/
 ├── database/schema.sql
 └── config/               # firebase service account (gitignored)
 ```
+=======
+# pro_enroll_fix_api
+>>>>>>> 7f04d3b7c2deeec9074ef1e946c89a47cc8c745a
