@@ -1,0 +1,5 @@
+/vendor/
+.env
+config/firebase-service-account.json
+/storage/logs/*.log
+!.gitkeep
