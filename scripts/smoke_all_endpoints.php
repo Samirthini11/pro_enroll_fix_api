@@ -8,7 +8,13 @@
 
 declare(strict_types=1);
 
-$base = getenv('API_BASE') ?: 'http://localhost:8080';
+require dirname(__DIR__) . '/src/Config.php';
+
+use ProEnroll\Api\Config;
+
+Config::load(dirname(__DIR__));
+
+$base = getenv('API_BASE') ?: (Config::get('APP_URL') ?? 'http://98.93.105.128/pro_enroll_api/public');
 
 function req(string $method, string $path, ?array $body = null, ?string $token = null): array
 {

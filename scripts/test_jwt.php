@@ -7,6 +7,8 @@ use ProEnroll\Api\Config;
 
 Config::load(dirname(__DIR__));
 
+$apiBase = rtrim(Config::get('APP_URL') ?? 'http://98.93.105.128/pro_enroll_api/public', '/');
+
 $token = JwtAuth::issue(['sub' => 'test', 'phone' => '+91999', 'jti' => 'sess-1'], 3600);
 echo "issued\n";
 
@@ -18,7 +20,7 @@ try {
 }
 
 // HTTP round-trip via file_get_contents
-$ch = curl_init('http://localhost:8080/v1/auth/otp/send');
+$ch = curl_init("{$apiBase}/v1/auth/otp/send");
 curl_setopt_array($ch, [
     CURLOPT_POST => true,
     CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
@@ -32,7 +34,7 @@ $rid = $send['data']['request_id'];
 $otp = $send['data']['debug_otp'] ?? null;
 echo "otp=$otp rid=$rid\n";
 
-$ch = curl_init('http://localhost:8080/v1/auth/otp/verify');
+$ch = curl_init("{$apiBase}/v1/auth/otp/verify");
 curl_setopt_array($ch, [
     CURLOPT_POST => true,
     CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
@@ -49,7 +51,7 @@ curl_close($ch);
 $access = $verify['data']['access_token'] ?? '';
 echo "access len=" . strlen($access) . "\n";
 
-$ch = curl_init('http://localhost:8080/v1/auth/validate');
+$ch = curl_init("{$apiBase}/v1/auth/validate");
 curl_setopt_array($ch, [
     CURLOPT_HTTPHEADER => ["Authorization: Bearer $access"],
     CURLOPT_RETURNTRANSFER => true,
