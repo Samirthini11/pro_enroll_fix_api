@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 header('Content-Type: application/json');
@@ -32,8 +31,8 @@ if ($checks['vendor']) {
         $host = \ProEnroll\Api\Config::get('DB_HOST', '127.0.0.1');
         $port = \ProEnroll\Api\Config::get('DB_PORT', '3306');
         $name = \ProEnroll\Api\Config::get('DB_NAME', 'pro_enroll');
-        $user = \ProEnroll\Api\Config::get('DB_USER', 'root');
-        $pass = \ProEnroll\Api\Config::get('DB_PASS', '');
+        $user = \ProEnroll\Api\Config::get('DB_USER', 'proadmin');
+        $pass = \ProEnroll\Api\Config::get('DB_PASS', 'Krishna@135');
 
         $pdo = new PDO(
             "mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4",
