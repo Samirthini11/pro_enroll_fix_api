@@ -1,2 +1,25 @@
 RewriteEngine On
-RewriteRule ^(.*)$ public/$1 [L]
+RewriteBase /pro_enroll_api/
+
+# Disable directory listing (fixes "Index of /pro_enroll_api")
+Options -Indexes
+DirectoryIndex index.php
+
+# CORS (required for Flutter web / Chrome)
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Accept, X-Requested-With"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
+
+# Preflight OPTIONS
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^ - [R=204,L]
+
+# Serve existing files (test_connection.php, README.md, etc.)
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# Route all API paths to the front controller
+RewriteRule ^ public/index.php [QSA,L]

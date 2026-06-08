@@ -24,13 +24,20 @@ final class Request
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
         $uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 
-        $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
-        $basePath = rtrim(dirname($scriptName), '/\\');
-        if ($basePath !== '' && str_starts_with($uri, $basePath)) {
-            $uri = substr($uri, strlen($basePath)) ?: '/';
+        $pathInfo = $_SERVER['PATH_INFO'] ?? '';
+        if (is_string($pathInfo) && $pathInfo !== '') {
+            $path = rtrim($pathInfo, '/') ?: '/';
+        } else {
+            $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+            $basePath = rtrim(dirname($scriptName), '/\\');
+            if ($basePath !== '' && str_starts_with($uri, $basePath)) {
+                $uri = substr($uri, strlen($basePath)) ?: '/';
+            }
+            if (str_starts_with($uri, '/index.php')) {
+                $uri = substr($uri, strlen('/index.php')) ?: '/';
+            }
+            $path = rtrim($uri, '/') ?: '/';
         }
-
-        $path = rtrim($uri, '/') ?: '/';
 
         $query = $_GET;
         $raw = file_get_contents('php://input') ?: '';

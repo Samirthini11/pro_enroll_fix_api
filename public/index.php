@@ -19,6 +19,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $root = dirname(__DIR__);
 
+if (!is_readable($root . '/vendor/autoload.php')) {
+    header('Content-Type: application/json');
+    header('Access-Control-Allow-Origin: *');
+    http_response_code(503);
+    echo json_encode([
+        'success' => false,
+        'error' => [
+            'code' => 'missing_vendor',
+            'message' => 'Run composer install in the API project root on the server.',
+        ],
+    ], JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 require $root . '/vendor/autoload.php';
 
 Config::load($root);

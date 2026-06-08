@@ -1,0 +1,628 @@
+{
+  "info": {
+    "_postman_id": "e9b6f8f8-9c84-4dd2-89f1-6e3bb1b4f0f1",
+    "name": "Pro-Enroll + Pro-Fix API",
+    "description": "All 55 endpoints — Pro-Enroll (pro) + Pro-Fix Customer.\n\n**Live:** import Pro-Enroll-API-Live.postman_environment.json\n**base_url:** http://98.93.105.128/pro_enroll_api\n\n**Docs:** docs/POSTMAN_LIVE_FULL_REFERENCE.md\n\nTest order: Health → Auth Send/Verify OTP → Me → Screens → Customer",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "API Root (/v1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1"
+          }
+        },
+        {
+          "name": "Ping (public/ping.php)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/public/ping.php"
+          }
+        },
+        {
+          "name": "Test Connection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/test_connection.php"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Send OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  var json = pm.response.json();",
+                  "  var data = json.data || {};",
+                  "  if (data.request_id) pm.collectionVariables.set('request_id', data.request_id);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_e164\": \"+919876543210\",\n  \"mode\": \"sign_up\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/otp/send"
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  var json = pm.response.json();",
+                  "  var data = json.data || {};",
+                  "  if (data.access_token) pm.collectionVariables.set('access_token', data.access_token);",
+                  "  if (data.refresh_token) pm.collectionVariables.set('refresh_token', data.refresh_token);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"otp\": \"123456\",\n  \"mode\": \"sign_up\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/otp/verify"
+          }
+        },
+        {
+          "name": "Firebase Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  var json = pm.response.json();",
+                  "  var data = json.data || {};",
+                  "  if (data.access_token) pm.collectionVariables.set('access_token', data.access_token);",
+                  "  if (data.refresh_token) pm.collectionVariables.set('refresh_token', data.refresh_token);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"<firebase_id_token>\",\n  \"mode\": \"sign_up\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/firebase/session"
+          }
+        },
+        {
+          "name": "Send OTP (Pro-Fix Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  var json = pm.response.json();",
+                  "  var data = json.data || {};",
+                  "  if (data.request_id) pm.collectionVariables.set('request_id', data.request_id);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_e164\": \"+919876543210\",\n  \"mode\": \"sign_up\",\n  \"app\": \"pro_fix_customer\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/otp/send"
+          }
+        },
+        {
+          "name": "Verify OTP (Pro-Fix Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  var json = pm.response.json();",
+                  "  var data = json.data || {};",
+                  "  if (data.access_token) pm.collectionVariables.set('access_token', data.access_token);",
+                  "  if (data.refresh_token) pm.collectionVariables.set('refresh_token', data.refresh_token);",
+                  "} catch (e) {}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"otp\": \"123456\",\n  \"mode\": \"sign_up\",\n  \"app\": \"pro_fix_customer\",\n  \"full_name\": \"Test Customer\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/otp/verify"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/refresh"
+          }
+        },
+        {
+          "name": "Me (Bearer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/auth/me"
+          }
+        },
+        {
+          "name": "Validate (Bearer)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/auth/validate"
+          }
+        },
+        {
+          "name": "Switch Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"pro\"\n}"
+            },
+            "url": "{{base_url}}/v1/auth/switch-role"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/v1/auth/logout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Screens",
+      "item": [
+        { "name": "Splash", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/screens/splash" } },
+        { "name": "Auth Landing", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/screens/auth-landing" } },
+        { "name": "Auth Phone (GET)", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/screens/auth-phone" } },
+        {
+          "name": "Auth Phone (POST)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone_e164\": \"+919876543210\",\n  \"mode\": \"sign_up\"\n}" },
+            "url": "{{base_url}}/v1/screens/auth-phone"
+          }
+        },
+        { "name": "Auth OTP (GET)", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/screens/auth-otp" } },
+        {
+          "name": "Auth OTP (POST)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"otp\": \"123456\",\n  \"mode\": \"sign_up\"\n}" },
+            "url": "{{base_url}}/v1/screens/auth-otp"
+          }
+        },
+        {
+          "name": "Onboard Category (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/onboard-category"
+          }
+        },
+        {
+          "name": "Onboard Category (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"category_codes\": [\"ac\", \"plumbing\"],\n  \"experience_by_category\": { \"ac\": 3, \"plumbing\": 2 }\n}" },
+            "url": "{{base_url}}/v1/screens/onboard-category"
+          }
+        },
+        {
+          "name": "Onboard Experience (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/onboard-experience"
+          }
+        },
+        {
+          "name": "Onboard Experience (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"full_name\": \"Pro User\",\n  \"years_experience\": 3\n}" },
+            "url": "{{base_url}}/v1/screens/onboard-experience"
+          }
+        },
+        {
+          "name": "Onboard Location (GET)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/screens/onboard-location"
+          }
+        },
+        {
+          "name": "Onboard Location (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"city\": \"Pondicherry\",\n  \"work_radius_km\": 10\n}" },
+            "url": "{{base_url}}/v1/screens/onboard-location"
+          }
+        },
+        {
+          "name": "Onboard Fee (GET)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/screens/onboard-fee"
+          }
+        },
+        {
+          "name": "Onboard Fee (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"visit_fee_paise\": 29900\n}" },
+            "url": "{{base_url}}/v1/screens/onboard-fee"
+          }
+        },
+        {
+          "name": "KYC Intro",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/kyc-intro"
+          }
+        },
+        {
+          "name": "KYC Aadhaar",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"aadhaar_number\": \"123412341234\",\n  \"otp\": \"1234\"\n}" },
+            "url": "{{base_url}}/v1/screens/kyc-aadhaar"
+          }
+        },
+        {
+          "name": "KYC Selfie",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"selfie_url\": \"https://example.com/selfie.jpg\"\n}" },
+            "url": "{{base_url}}/v1/screens/kyc-selfie"
+          }
+        },
+        {
+          "name": "KYC Docs",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"documents\": [{\"type\": \"pan\", \"url\": \"https://example.com/pan.jpg\"}]\n}" },
+            "url": "{{base_url}}/v1/screens/kyc-docs"
+          }
+        },
+        {
+          "name": "KYC Pending",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/kyc-pending"
+          }
+        },
+        {
+          "name": "Simulate Approval",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/kyc-pending/simulate-approval"
+          }
+        },
+        {
+          "name": "Home Help",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/screens/home-help"
+          }
+        },
+        {
+          "name": "Home Jobs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/home-jobs"
+          }
+        },
+        {
+          "name": "Job Offer (dynamic)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/job-offer/{{offer_id}}"
+          }
+        },
+        {
+          "name": "Job Offer Accept",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/job-offer/{{offer_id}}/accept"
+          }
+        },
+        {
+          "name": "Job Offer Reject",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/job-offer/{{offer_id}}/reject"
+          }
+        },
+        {
+          "name": "Job Active (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/job-active"
+          }
+        },
+        {
+          "name": "Job Active (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"started\"\n}" },
+            "url": "{{base_url}}/v1/screens/job-active"
+          }
+        },
+        {
+          "name": "Job Active (POST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"complete\"\n}" },
+            "url": "{{base_url}}/v1/screens/job-active"
+          }
+        },
+        {
+          "name": "Home Earnings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/home-earnings"
+          }
+        },
+        {
+          "name": "Home Profile (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/screens/home-profile"
+          }
+        },
+        {
+          "name": "Home Profile (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"display_name\": \"Pro User\",\n  \"language\": \"en\"\n}" },
+            "url": "{{base_url}}/v1/screens/home-profile"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Customer",
+      "item": [
+        { "name": "Categories", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/customer/categories" } },
+        { "name": "Cities", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/customer/cities" } },
+        { "name": "Pros Search", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/customer/pros/search?city=Pondicherry&category=ac" } },
+        { "name": "Pro Detail", "request": { "method": "GET", "header": [], "url": "{{base_url}}/v1/customer/pros/{{pro_id}}" } },
+        {
+          "name": "Bookings (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/customer/bookings"
+          }
+        },
+        {
+          "name": "Bookings (POST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pro_id\": {{pro_id}},\n  \"category\": \"ac\",\n  \"scheduled_at\": \"2026-06-10T10:00:00+05:30\",\n  \"address_line\": \"MG Road, Pondicherry\"\n}"
+            },
+            "url": "{{base_url}}/v1/customer/bookings"
+          }
+        },
+        { "name": "Booking Detail", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }], "url": "{{base_url}}/v1/customer/bookings/{{booking_id}}" } },
+        { "name": "Booking Complete", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }], "url": "{{base_url}}/v1/customer/bookings/{{booking_id}}/complete" } },
+        {
+          "name": "Booking Rating",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Great service\"\n}" },
+            "url": "{{base_url}}/v1/customer/bookings/{{booking_id}}/rating"
+          }
+        },
+        {
+          "name": "Profile (GET)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": "{{base_url}}/v1/customer/profile"
+          }
+        },
+        {
+          "name": "Profile (PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"full_name\": \"Customer Name\",\n  \"city_id\": 1\n}" },
+            "url": "{{base_url}}/v1/customer/profile"
+          }
+        },
+        {
+          "name": "Profile Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"photo_url\": \"https://example.com/photo.jpg\"\n}" },
+            "url": "{{base_url}}/v1/customer/profile/photo"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080" },
+    { "key": "access_token", "value": "" },
+    { "key": "refresh_token", "value": "" },
+    { "key": "request_id", "value": "" },
+    { "key": "offer_id", "value": "offer_001" },
+    { "key": "pro_id", "value": "1" },
+    { "key": "booking_id", "value": "1" }
+  ]
+}
