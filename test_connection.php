@@ -19,15 +19,15 @@ $result = [
     'app_url' => Config::get('APP_URL'),
     'db_host' => Config::get('DB_HOST', '127.0.0.1'),
     'db_name' => Config::get('DB_NAME', 'pro_enroll'),
-    'db_user' => Config::get('DB_USER', 'root'),
+    'db_user' => Config::get('DB_USER', 'proadmin'),
 ];
 
 try {
     $host = Config::get('DB_HOST', '127.0.0.1');
     $port = Config::get('DB_PORT', '3306');
     $name = Config::get('DB_NAME', 'pro_enroll');
-    $user = Config::get('DB_USER', 'root');
-    $pass = Config::get('DB_PASS', '');
+    $user = Config::get('DB_USER', 'proadmin');
+    $pass = Config::get('DB_PASS', 'Krishna@123');
 
     $pdo = new PDO(
         "mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4",

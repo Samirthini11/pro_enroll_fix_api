@@ -84,7 +84,7 @@ if ($checks['env']) {
     $checks['db_host'] = pingEnv('DB_HOST', '127.0.0.1');
     $checks['db_port'] = pingEnv('DB_PORT', '3306');
     $checks['db_name'] = pingEnv('DB_NAME', 'pro_enroll');
-    $checks['db_user'] = pingEnv('DB_USER', 'root');
+    $checks['db_user'] = pingEnv('DB_USER', 'proadmin');
     $checks['db_pass_set'] = pingEnv('DB_PASS') !== null && pingEnv('DB_PASS') !== '';
 
     $checks['env_loaded'] = [
@@ -109,8 +109,8 @@ if ($checks['vendor']) {
     $host = pingEnv('DB_HOST', '127.0.0.1');
     $port = pingEnv('DB_PORT', '3306');
     $name = pingEnv('DB_NAME', 'pro_enroll');
-    $user = pingEnv('DB_USER', 'root');
-    $pass = pingEnv('DB_PASS', '');
+    $user = pingEnv('DB_USER', 'proadmin');
+    $pass = pingEnv('DB_PASS', 'Krishna@123');
 
     $checks['db_dsn'] = "mysql:host={$host};port={$port};dbname={$name};charset=utf8mb4";
 
@@ -152,7 +152,7 @@ if (!$checks['ok']) {
     $checks['fixes'] = [];
     if (($checks['db'] ?? '') !== 'OK') {
         $checks['fixes'][] = 'phpMyAdmin → SQL → run database/setup_mysql_user.sql';
-        $checks['fixes'][] = 'Server .env: DB_USER=proadmin DB_PASS=Krishna@135';
+        $checks['fixes'][] = 'Server .env: DB_USER=proadmin DB_PASS=Krishna@123';
         if (isset($checks['db_error_help'])) {
             $checks['fixes'][] = $checks['db_error_help'];
         }

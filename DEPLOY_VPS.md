@@ -50,7 +50,7 @@ Open: http://98.93.105.128/phpmyadmin/
 3. **Create API user** (Ubuntu MySQL often blocks `root` from PHP — use `proadmin`):
 
 ```sql
-CREATE USER IF NOT EXISTS 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@135';
+CREATE USER IF NOT EXISTS 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@123';
 GRANT ALL PRIVILEGES ON pro_enroll.* TO 'proadmin'@'localhost';
 FLUSH PRIVILEGES;
 ```
@@ -58,7 +58,7 @@ FLUSH PRIVILEGES;
 If the user already exists with a wrong password:
 
 ```sql
-ALTER USER 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@135';
+ALTER USER 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@123';
 FLUSH PRIVILEGES;
 ```
 
@@ -70,7 +70,7 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=pro_enroll
 DB_USER=proadmin
-DB_PASS=Krishna@135
+DB_PASS=Krishna@123
 ```
 
 **Do not** set `APP_URL` to `.../pro_enroll_api/public` — use the base path only.
