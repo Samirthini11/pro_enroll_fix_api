@@ -19,6 +19,7 @@ $result = [
     'app_url' => Config::get('APP_URL'),
     'db_host' => Config::get('DB_HOST', '127.0.0.1'),
     'db_name' => Config::get('DB_NAME', 'pro_enroll'),
+    'db_user' => Config::get('DB_USER', 'root'),
 ];
 
 try {

@@ -20,8 +20,8 @@ final class Database
         $host = Config::get('DB_HOST', '127.0.0.1');
         $port = Config::get('DB_PORT', '3306');
         $name = Config::get('DB_NAME', 'pro_enroll');
-        $user = Config::get('DB_USER', 'proadmin');
-        $pass = Config::get('DB_PASS', 'Krishna@135');
+        $user = Config::get('DB_USER', 'root');
+        $pass = Config::get('DB_PASS', '');
 
         $dsn = "mysql:host=$host;port=$port;dbname=$name;charset=utf8mb4";
 

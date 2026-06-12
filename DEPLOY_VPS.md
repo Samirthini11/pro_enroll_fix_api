@@ -47,17 +47,33 @@ Open: http://98.93.105.128/phpmyadmin/
 
 1. Create database `pro_enroll` (utf8mb4_unicode_ci)
 2. Import `database/schema.sql`
+3. **Create API user** (Ubuntu MySQL often blocks `root` from PHP — use `proadmin`):
 
-`.env` on server:
+```sql
+CREATE USER IF NOT EXISTS 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@135';
+GRANT ALL PRIVILEGES ON pro_enroll.* TO 'proadmin'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+If the user already exists with a wrong password:
+
+```sql
+ALTER USER 'proadmin'@'localhost' IDENTIFIED BY 'Krishna@135';
+FLUSH PRIVILEGES;
+```
+
+`.env` on server (must match the MySQL user above):
 
 ```env
+APP_URL=http://98.93.105.128/pro_enroll_api
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=pro_enroll
-DB_USER=root
-DB_PASS=
-APP_URL=http://98.93.105.128/pro_enroll_api
+DB_USER=proadmin
+DB_PASS=Krishna@135
 ```
+
+**Do not** set `APP_URL` to `.../pro_enroll_api/public` — use the base path only.
 
 ## 5. Apache (required)
 
@@ -71,7 +87,18 @@ sudo systemctl reload apache2
 If `AllowOverride` is still off, the **Alias** in `deploy/apache-pro-enroll.conf` maps
 `/pro_enroll_api` → `public/` so `/v1/*` routes work.
 
-## 6. Verify
+## 6. One-command fix (SSH)
+
+After `git pull` on the server:
+
+```bash
+cd /var/www/html/pro_enroll_api
+bash scripts/vps-fix.sh
+```
+
+Import `database/setup_mysql_user.sql` in phpMyAdmin if `db` is still `FAIL`.
+
+## 7. Verify
 
 | URL | Expected |
 |-----|----------|
@@ -86,7 +113,7 @@ curl -s http://98.93.105.128/pro_enroll_api/v1/screens/splash
 curl -s http://98.93.105.128/pro_enroll_api/public/ping.php
 ```
 
-## 7. Flutter app (live API)
+## 8. Flutter app (live API)
 
 After verify passes:
 
@@ -104,5 +131,8 @@ Live base URL: `http://98.93.105.128/pro_enroll_api`
 | Index of /pro_enroll_api | Run step 5; ensure `.htaccess` and `index.php` are uploaded |
 | 404 on /v1/... | Enable `mod_rewrite`; apply Apache conf; check `public/.htaccess` exists |
 | 503 missing_vendor | `composer install` in project root |
-| db FAIL / infinityfree host | Replace server `.env` with `.env.remote` (local MySQL 127.0.0.1) |
+| db FAIL Access denied proadmin | Import `database/setup_mysql_user.sql` in phpMyAdmin |
+| app_url contains /public | `APP_URL=http://98.93.105.128/pro_enroll_api` (no `/public`) |
+| SplashScreen not found | Upload `api/` folder; run `composer dump-autoload -o` |
+| 404 on /v1/... | Upload root `.htaccess`; enable Apache rewrite (step 5) |
 | CORS error in Chrome | Headers in `public/.htaccess` + `public/index.php`; reload Apache |
