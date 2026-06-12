@@ -1,17 +1,18 @@
 <?php
-  ini_set('display_errors', '1');
-  ini_set('display_startup_errors', '1');
-  error_reporting(E_ALL);
+
 declare(strict_types=1);
+
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+error_reporting(E_ALL);
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 
 $root = __DIR__;
 require $root . '/src/Config.php';
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
+require $root . '/src/Database.php';
+
 use ProEnroll\Api\Config;
 use ProEnroll\Api\Database;
 
@@ -23,6 +24,7 @@ $result = [
     'php' => phpversion(),
     'app_url' => Config::get('APP_URL'),
     'db_host' => Config::get('DB_HOST', '127.0.0.1'),
+    'db_host_resolved' => Database::resolveHost(Config::get('DB_HOST', '127.0.0.1')),
     'db_name' => Config::get('DB_NAME', 'pro_enroll'),
     'db_user' => Config::get('DB_USER', 'proadmin'),
 ];
@@ -46,4 +48,4 @@ try {
     $result['error'] = $e->getMessage();
 }
 
-echo json_encode($result, JSON_PRETTY_PRINT);
+echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
