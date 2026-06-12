@@ -136,3 +136,5 @@ Live base URL: `http://98.93.105.128/pro_enroll_api`
 | SplashScreen not found | Upload `api/` folder; run `composer dump-autoload -o` |
 | 404 on /v1/... | Upload root `.htaccess`; enable Apache rewrite (step 5) |
 | CORS error in Chrome | Headers in `public/.htaccess` + `public/index.php`; reload Apache |
+| 500 on all URLs (even README.md) | Broken `.htaccess` — remove `Options` from `.htaccess`; run `deploy/ubuntu-fix-404.sh` |
+| 500 on `/v1/auth/otp/send` | Use **POST** + JSON body; deploy latest `.htaccess`; `composer install` on server |

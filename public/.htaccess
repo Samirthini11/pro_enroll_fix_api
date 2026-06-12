@@ -8,9 +8,9 @@ RewriteEngine On
     Header always set Access-Control-Max-Age "86400"
 </IfModule>
 
-# Handle preflight OPTIONS at Apache level
+# Handle preflight OPTIONS
 RewriteCond %{REQUEST_METHOD} OPTIONS
-RewriteRule ^(.*)$ $1 [R=204,L]
+RewriteRule ^ - [R=204,L]
 
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteRule ^ index.php [QSA,L]

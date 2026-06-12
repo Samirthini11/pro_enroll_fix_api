@@ -1,11 +1,9 @@
 RewriteEngine On
 RewriteBase /pro_enroll_api/
 
-# Disable directory listing (fixes "Index of /pro_enroll_api")
-Options -Indexes
-DirectoryIndex index.php
+# Note: Options/DirectoryIndex belong in deploy/apache-pro-enroll.conf (not here — causes 500 if AllowOverride lacks Options)
 
-# CORS (required for Flutter web / Chrome)
+# CORS (Flutter web / Postman)
 <IfModule mod_headers.c>
     Header always set Access-Control-Allow-Origin "*"
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
@@ -17,9 +15,9 @@ DirectoryIndex index.php
 RewriteCond %{REQUEST_METHOD} OPTIONS
 RewriteRule ^ - [R=204,L]
 
-# Serve existing files (test_connection.php, README.md, etc.)
+# Serve existing files (README.md, test_connection.php, etc.)
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^ - [L]
 
-# Route all API paths to the front controller
+# Route /v1/* and other paths to front controller
 RewriteRule ^ public/index.php [QSA,L]
