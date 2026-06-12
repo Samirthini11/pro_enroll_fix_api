@@ -50,8 +50,23 @@ function pingEnv(string $key, ?string $default = null): ?string
     return (string) $v;
 }
 
+function pingDbHost(?string $raw): string
+{
+    $host = trim((string) $raw);
+    $host = preg_replace('#^https?://#i', '', $host) ?? $host;
+    $host = rtrim($host, '/');
+    $host = explode('/', $host)[0];
+    if ($host === '98.93.105.128') {
+        return '127.0.0.1';
+    }
+    return $host !== '' ? $host : '127.0.0.1';
+}
+
 function pingDbErrorHelp(string $message): string
 {
+    if (str_contains($message, 'http://') || str_contains($message, 'https://')) {
+        return 'DB_HOST must be 127.0.0.1 (MySQL on same server), not http://98.93.105.128/. Use APP_URL for the website.';
+    }
     if (str_contains($message, '1045')) {
         return 'MySQL rejected the username/password. Create the user in phpMyAdmin (database/setup_mysql_user.sql) and match DB_USER/DB_PASS in server .env.';
     }
@@ -96,6 +111,12 @@ if ($checks['env']) {
         'APP_URL' => pingEnv('APP_URL') !== null,
     ];
 
+    $rawDbHost = pingEnv('DB_HOST', '127.0.0.1') ?? '127.0.0.1';
+    $checks['db_host_resolved'] = pingDbHost($rawDbHost);
+    if (preg_match('#^https?://#i', $rawDbHost)) {
+        $checks['db_host_warning'] = 'DB_HOST must be 127.0.0.1 — not a website URL. Website goes in APP_URL.';
+    }
+
     $appUrl = (string) ($checks['app_url'] ?? '');
     if (str_contains($appUrl, '/public')) {
         $checks['app_url_warning'] = 'APP_URL should be http://98.93.105.128/pro_enroll_api (remove /public)';
@@ -106,7 +127,7 @@ if ($checks['vendor']) {
     require $root . '/vendor/autoload.php';
     \ProEnroll\Api\Config::load($root);
 
-    $host = pingEnv('DB_HOST', '127.0.0.1');
+    $host = pingDbHost(pingEnv('DB_HOST', '127.0.0.1'));
     $port = pingEnv('DB_PORT', '3306');
     $name = pingEnv('DB_NAME', 'pro_enroll');
     $user = pingEnv('DB_USER', 'proadmin');
@@ -156,6 +177,9 @@ if (!$checks['ok']) {
         if (isset($checks['db_error_help'])) {
             $checks['fixes'][] = $checks['db_error_help'];
         }
+    }
+    if (isset($checks['db_host_warning'])) {
+        $checks['fixes'][] = $checks['db_host_warning'];
     }
     if (isset($checks['app_url_warning'])) {
         $checks['fixes'][] = $checks['app_url_warning'];

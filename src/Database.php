@@ -11,13 +11,29 @@ final class Database
 {
     private static ?PDO $pdo = null;
 
+    /** MySQL hostname only — not the website URL (use APP_URL for http://98.93.105.128/...). */
+    public static function resolveHost(?string $raw): string
+    {
+        $host = trim((string) $raw);
+        $host = preg_replace('#^https?://#i', '', $host) ?? $host;
+        $host = rtrim($host, '/');
+        $host = explode('/', $host)[0];
+
+        // API and MySQL on same VPS — connect via loopback, not public IP
+        if ($host === '98.93.105.128') {
+            return '127.0.0.1';
+        }
+
+        return $host !== '' ? $host : '127.0.0.1';
+    }
+
     public static function connection(): PDO
     {
         if (self::$pdo !== null) {
             return self::$pdo;
         }
 
-        $host = Config::get('DB_HOST', '127.0.0.1');
+        $host = self::resolveHost(Config::get('DB_HOST', '127.0.0.1'));
         $port = Config::get('DB_PORT', '3306');
         $name = Config::get('DB_NAME', 'pro_enroll');
         $user = Config::get('DB_USER', 'proadmin');

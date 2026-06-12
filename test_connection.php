@@ -9,6 +9,7 @@ $root = __DIR__;
 require $root . '/src/Config.php';
 
 use ProEnroll\Api\Config;
+use ProEnroll\Api\Database;
 
 Config::load($root);
 
@@ -23,7 +24,7 @@ $result = [
 ];
 
 try {
-    $host = Config::get('DB_HOST', '127.0.0.1');
+    $host = Database::resolveHost(Config::get('DB_HOST', '127.0.0.1'));
     $port = Config::get('DB_PORT', '3306');
     $name = Config::get('DB_NAME', 'pro_enroll');
     $user = Config::get('DB_USER', 'proadmin');
