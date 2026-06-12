@@ -29,12 +29,12 @@
           "response": []
         },
         {
-          "name": "Ping (public/ping.php)",
+          "name": "Ping (ping.php)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/public/ping.php",
+              "raw": "{{base_url}}/ping.php",
               "host": [
                 "{{base_url}}"
               ],

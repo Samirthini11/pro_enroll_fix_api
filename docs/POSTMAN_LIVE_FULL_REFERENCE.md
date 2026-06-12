@@ -8,6 +8,7 @@ Complete list of **all API endpoints** for Postman testing on the live VPS.
 | **Postman collection** | `Pro-Enroll-API.postman_collection.json` |
 | **Live environment** | `Pro-Enroll-API-Live.postman_environment.json` |
 | **Server deploy guide** | `DEPLOY_VPS.md` |
+| **One-command VPS setup** | `sudo bash deploy/ubuntu-setup.sh` (run on server after upload) |
 
 > **Apps using this API:** Pro-Enroll (professional) · Pro-Fix Customer (customer app)  
 > Same server, same `base_url`. Customer auth adds `"app": "pro_fix_customer"` in OTP bodies.
@@ -83,7 +84,7 @@ Run in this order. Check **Status = 200** and `"success": true` in JSON.
 | # | Method | Path | Live URL | Auth | Purpose | Postman |
 |---|--------|------|----------|------|---------|---------|
 | H1 | GET | `/v1` | `http://98.93.105.128/pro_enroll_api/v1` | — | API name, version, route list | Health → API Root |
-| H2 | GET | `/public/ping.php` | `http://98.93.105.128/pro_enroll_api/public/ping.php` | — | PHP, vendor, .env, DB health | Health → Ping |
+| H2 | GET | `/ping.php` | `http://98.93.105.128/pro_enroll_api/ping.php` | — | PHP, vendor, .env, DB health | Health → Ping |
 | H3 | GET | `/test_connection.php` | `http://98.93.105.128/pro_enroll_api/test_connection.php` | — | DB connectivity (legacy) | Health → Test Connection |
 
 ---
@@ -296,7 +297,7 @@ Import DB in phpMyAdmin: `database/schema.sql`
 Verify:
 
 ```bash
-curl http://98.93.105.128/pro_enroll_api/public/ping.php
+curl http://98.93.105.128/pro_enroll_api/ping.php
 curl http://98.93.105.128/pro_enroll_api/v1/screens/splash
 ```
 
@@ -335,7 +336,7 @@ pro_enroll_api/
 
 ```text
 http://98.93.105.128/pro_enroll_api/v1
-http://98.93.105.128/pro_enroll_api/public/ping.php
+http://98.93.105.128/pro_enroll_api/ping.php
 http://98.93.105.128/pro_enroll_api/v1/screens/splash
 http://98.93.105.128/pro_enroll_api/v1/auth/otp/send
 http://98.93.105.128/pro_enroll_api/v1/auth/otp/verify

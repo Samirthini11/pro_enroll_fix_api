@@ -1,18 +1,7 @@
-RewriteEngine On
-RewriteBase /pro_enroll_api/
-
-# CORS headers for all responses
+# CORS (routing is in deploy/apache-pro-enroll.conf — run deploy/ubuntu-setup.sh on VPS)
 <IfModule mod_headers.c>
     Header always set Access-Control-Allow-Origin "*"
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Accept, X-Requested-With"
     Header always set Access-Control-Max-Age "86400"
 </IfModule>
-
-# Handle preflight OPTIONS
-RewriteCond %{REQUEST_METHOD} OPTIONS
-RewriteRule ^ - [R=204,L]
-
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]

@@ -141,10 +141,10 @@ Authorization: Bearer {{access_token}}
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/v1` | — | API info, route list |
-| GET | `/public/ping.php` | — | Server health: PHP, vendor, .env, DB |
+| GET | `/ping.php` | — | Server health: PHP, vendor, .env, DB |
 | GET | `/test_connection.php` | — | Legacy DB connectivity check (project root) |
 
-**Live ping:** `http://98.93.105.128/pro_enroll_api/public/ping.php`
+**Live ping:** `http://98.93.105.128/pro_enroll_api/ping.php`
 
 Expected when server is ready:
 
@@ -366,7 +366,7 @@ php -S localhost:8080 -t public
 
 ```bash
 # Health
-curl http://98.93.105.128/pro_enroll_api/public/ping.php
+curl http://98.93.105.128/pro_enroll_api/ping.php
 curl http://98.93.105.128/pro_enroll_api/v1
 
 # Send OTP

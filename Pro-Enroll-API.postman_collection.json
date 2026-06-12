@@ -18,11 +18,11 @@
           }
         },
         {
-          "name": "Ping (public/ping.php)",
+          "name": "Ping (ping.php)",
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{base_url}}/public/ping.php"
+            "url": "{{base_url}}/ping.php"
           }
         },
         {
