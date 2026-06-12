@@ -93,6 +93,18 @@ $checks = [
     'api_screens' => is_readable($root . '/api/screens/splash.php'),
 ];
 
+if ($checks['vendor']) {
+    require $root . '/vendor/autoload.php';
+    $checks['autoload_otp_send'] = class_exists(
+        \ProEnroll\Api\Endpoints\Auth\OtpSendEndpoint::class,
+        false
+    );
+    $checks['autoload_splash'] = class_exists(
+        \ProEnroll\Api\Endpoints\Screens\SplashScreen::class,
+        false
+    );
+}
+
 if ($checks['env']) {
     $checks['app_debug'] = $appDebug;
     $checks['app_url'] = pingEnv('APP_URL');
@@ -166,6 +178,8 @@ if (!$checks['env']) {
 $checks['ok'] = $checks['vendor']
     && $checks['env']
     && $checks['api_screens']
+    && ($checks['autoload_otp_send'] ?? false)
+    && ($checks['autoload_splash'] ?? false)
     && ($checks['db'] ?? '') === 'OK'
     && !isset($checks['app_url_warning']);
 
@@ -186,6 +200,9 @@ if (!$checks['ok']) {
     }
     if (!$checks['api_screens']) {
         $checks['fixes'][] = 'Upload api/ folder; run composer dump-autoload -o on server';
+    }
+    if (!($checks['autoload_otp_send'] ?? false) || !($checks['autoload_splash'] ?? false)) {
+        $checks['fixes'][] = 'Run: composer dump-autoload -o (endpoint PHP files use classmap, not PSR-4 filenames)';
     }
     if (!$checks['root_htaccess']) {
         $checks['fixes'][] = 'Upload root .htaccess for /v1/* routes';

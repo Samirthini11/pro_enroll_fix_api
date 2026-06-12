@@ -29,7 +29,9 @@ Alias /pro_enroll_api /var/www/html/pro_enroll_api/public
 <Directory /var/www/html/pro_enroll_api/public>
     Options -Indexes +FollowSymLinks
     AllowOverride All
+    DirectoryIndex index.php
     Require all granted
+    FallbackResource /index.php
 </Directory>
 
 <Directory /var/www/html/pro_enroll_api>
@@ -51,6 +53,7 @@ echo "[4/6] composer install..."
 cd "$API_ROOT"
 if command -v composer >/dev/null 2>&1; then
   composer install --no-dev --optimize-autoloader
+  composer dump-autoload -o
 else
   echo "WARN: composer not found. Install: apt install composer"
 fi

@@ -1,5 +1,6 @@
 <?php
-
+echo "Hello World";
+exit;
 declare(strict_types=1);
 
 use ProEnroll\Api\Config;
