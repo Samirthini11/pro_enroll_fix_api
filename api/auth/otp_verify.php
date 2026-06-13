@@ -34,6 +34,10 @@ final class OtpVerifyEndpoint
             $service = new AuthService();
             Response::ok($service->verifyOtp($requestId, $otp, $mode, $request));
         } catch (\RuntimeException $e) {
+            if (str_contains($e->getMessage(), 'JWT_SECRET')) {
+                Response::fail($e->getMessage(), 503, 'jwt_not_configured');
+                return;
+            }
             Response::fail($e->getMessage(), 401, 'invalid_otp');
         } catch (\Throwable $e) {
             Response::fail('Verification failed', 500, 'otp_verify_failed');

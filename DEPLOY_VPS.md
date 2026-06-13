@@ -150,5 +150,6 @@ Live base URL: `http://98.93.105.128/pro_enroll_api`
 | 500 on `/pro_enroll_api/public/ping.php` | Wrong URL — use `/pro_enroll_api/ping.php` (no `/public/`; Apache Alias already maps to `public/`) |
 | 500 HTML on `/v1/*` (index.php works) | Run `sudo bash deploy/ubuntu-fix-404.sh` (Apache rewrite + `AllowOverride`) |
 | 500 JSON `Class …Endpoint not found` | Run `composer dump-autoload -o` after upload (`api/*` uses classmap in `composer.json`) |
+| OTP verify: `JWT_SECRET is not configured` | Add `JWT_SECRET` to server `.env` — run `openssl rand -hex 32` or `sudo bash deploy/ubuntu-setup.sh` |
 | 500 on `/v1/auth/otp/send` | Use **POST** + JSON body; deploy latest code; `composer install` on server |
 | All APIs broken | Upload latest code; run `sudo bash deploy/ubuntu-setup.sh`; fix broken `public/index.php` if it contains debug `echo` |

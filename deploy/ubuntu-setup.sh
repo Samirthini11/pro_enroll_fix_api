@@ -51,6 +51,8 @@ Alias /pro_enroll_api /var/www/html/pro_enroll_api/public
     Require all granted
 
     RewriteEngine On
+    RewriteCond %{HTTP:Authorization} ^(.+)$
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^ index.php [L]
@@ -82,6 +84,19 @@ if [ -f "$API_ROOT/.env" ] && grep -q 'APP_URL=.*/public' "$API_ROOT/.env"; then
   echo "  Fixed APP_URL (removed /public suffix)"
 fi
 
+# JWT_SECRET required for OTP verify → JWT session
+if [ -f "$API_ROOT/.env" ]; then
+  if ! grep -qE '^JWT_SECRET=.+$' "$API_ROOT/.env"; then
+    SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 64)
+    if grep -q '^JWT_SECRET=' "$API_ROOT/.env"; then
+      sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$SECRET|" "$API_ROOT/.env"
+    else
+      printf '\nJWT_SECRET=%s\n' "$SECRET" >> "$API_ROOT/.env"
+    fi
+    echo "  Generated JWT_SECRET in .env"
+  fi
+fi
+
 # --- 4. Composer ---
 echo "[4/7] Composer install + autoload classmap..."
 cd "$API_ROOT"
@@ -104,6 +119,9 @@ echo "[7/7] Smoke test (localhost)..."
 echo ""
 PING=$(curl -s -o /tmp/pe_ping.json -w "%{http_code}" http://127.0.0.1/pro_enroll_api/ping.php || true)
 SPLASH=$(curl -s -o /tmp/pe_splash.json -w "%{http_code}" http://127.0.0.1/pro_enroll_api/v1/screens/splash || true)
+AUTH=$(curl -s -o /tmp/pe_auth.json -w "%{http_code}" \
+  -H "Authorization: Bearer smoke-test-token" \
+  http://127.0.0.1/pro_enroll_api/v1/auth/me || true)
 
 echo "  ping.php          HTTP $PING"
 if [ -f /tmp/pe_ping.json ]; then
@@ -113,6 +131,11 @@ fi
 echo "  v1/screens/splash HTTP $SPLASH"
 if [ -f /tmp/pe_splash.json ]; then
   head -c 200 /tmp/pe_splash.json
+  echo ""
+fi
+echo "  auth/me + Bearer  HTTP $AUTH (expect 401 invalid_token, NOT missing_token)"
+if [ -f /tmp/pe_auth.json ]; then
+  grep -o '"code":"[^"]*"' /tmp/pe_auth.json 2>/dev/null || head -c 120 /tmp/pe_auth.json
   echo ""
 fi
 

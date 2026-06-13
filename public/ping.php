@@ -114,6 +114,9 @@ if ($checks['env']) {
     $checks['db_user'] = pingEnv('DB_USER', 'proadmin');
     $checks['db_pass_set'] = pingEnv('DB_PASS') !== null && pingEnv('DB_PASS') !== '';
 
+    $jwtSecret = pingEnv('JWT_SECRET');
+    $checks['jwt_secret_set'] = $jwtSecret !== null && $jwtSecret !== '';
+
     $checks['env_loaded'] = [
         'DB_HOST' => pingEnv('DB_HOST') !== null,
         'DB_PORT' => pingEnv('DB_PORT') !== null,
@@ -121,6 +124,7 @@ if ($checks['env']) {
         'DB_USER' => pingEnv('DB_USER') !== null,
         'DB_PASS' => pingEnv('DB_PASS') !== null,
         'APP_URL' => pingEnv('APP_URL') !== null,
+        'JWT_SECRET' => $checks['jwt_secret_set'],
     ];
 
     $rawDbHost = pingEnv('DB_HOST', '127.0.0.1') ?? '127.0.0.1';
@@ -180,6 +184,7 @@ $checks['ok'] = $checks['vendor']
     && $checks['api_screens']
     && ($checks['autoload_otp_send'] ?? false)
     && ($checks['autoload_splash'] ?? false)
+    && ($checks['jwt_secret_set'] ?? false)
     && ($checks['db'] ?? '') === 'OK'
     && !isset($checks['app_url_warning']);
 
@@ -206,6 +211,9 @@ if (!$checks['ok']) {
     }
     if (!$checks['root_htaccess']) {
         $checks['fixes'][] = 'Upload root .htaccess for /v1/* routes';
+    }
+    if (!($checks['jwt_secret_set'] ?? false)) {
+        $checks['fixes'][] = 'Add JWT_SECRET to server .env: openssl rand -hex 32';
     }
 }
 

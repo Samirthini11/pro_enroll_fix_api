@@ -49,15 +49,13 @@ final class Request
             }
         }
 
-        $headers = [];
-        foreach ($_SERVER as $k => $v) {
-            if (str_starts_with($k, 'HTTP_')) {
-                $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($k, 5)))));
-                $headers[$name] = $v;
-            }
-        }
+        $headers = self::collectHeaders();
 
-        $auth = $headers['Authorization'] ?? $_SERVER['HTTP_AUTHORIZATION'] ?? null;
+        $auth = $headers['Authorization']
+            ?? $headers['authorization']
+            ?? $_SERVER['HTTP_AUTHORIZATION']
+            ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+            ?? null;
         $token = null;
         if (is_string($auth) && preg_match('/^Bearer\s+(.+)$/i', $auth, $m)) {
             $token = trim($m[1]);
@@ -69,5 +67,40 @@ final class Request
     public function input(string $key, mixed $default = null): mixed
     {
         return $this->body[$key] ?? $this->query[$key] ?? $default;
+    }
+
+    /** @return array<string, string> */
+    private static function collectHeaders(): array
+    {
+        $headers = [];
+        foreach ($_SERVER as $k => $v) {
+            if (!is_string($v) || !str_starts_with($k, 'HTTP_')) {
+                continue;
+            }
+            $name = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($k, 5)))));
+            $headers[$name] = $v;
+        }
+
+        if (function_exists('apache_request_headers')) {
+            $apache = apache_request_headers();
+            if (is_array($apache)) {
+                foreach ($apache as $name => $value) {
+                    if (is_string($name) && is_string($value)) {
+                        $headers[$name] = $value;
+                    }
+                }
+            }
+        } elseif (function_exists('getallheaders')) {
+            $all = getallheaders();
+            if (is_array($all)) {
+                foreach ($all as $name => $value) {
+                    if (is_string($name) && is_string($value)) {
+                        $headers[$name] = $value;
+                    }
+                }
+            }
+        }
+
+        return $headers;
     }
 }

@@ -1,6 +1,10 @@
 RewriteEngine On
 RewriteBase /pro_enroll_api/
 
+# Forward Authorization to PHP (Apache strips it under Alias/FPM without this).
+RewriteCond %{HTTP:Authorization} ^(.+)$
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
 # Note: Options/DirectoryIndex belong in deploy/apache-pro-enroll.conf (not here — causes 500 if AllowOverride lacks Options)
 
 # CORS (Flutter web / Postman)

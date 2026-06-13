@@ -5,7 +5,7 @@ Complete list of **all API endpoints** for Postman testing on the live VPS.
 | Setting | Value |
 |---------|-------|
 | **Live base URL** | `http://98.93.105.128/pro_enroll_api` |
-| **Postman collection** | `Pro-Enroll-API.postman_collection.json` |
+| **Postman collection** | `Pro-Enroll-API.postman_collection.json` (Bearer token auth) |
 | **Live environment** | `Pro-Enroll-API-Live.postman_environment.json` |
 | **Server deploy guide** | `DEPLOY_VPS.md` |
 | **One-command VPS setup** | `sudo bash deploy/ubuntu-setup.sh` (run on server after upload) |
@@ -30,9 +30,11 @@ Complete list of **all API endpoints** for Postman testing on the live VPS.
 | Variable | Live value | Notes |
 |----------|------------|-------|
 | `base_url` | `http://98.93.105.128/pro_enroll_api` | Required |
-| `access_token` | *(empty)* | Auto-set after Verify OTP |
+| `phone_e164` | `+919876543210` | Phone for OTP |
+| `access_token` | *(empty)* | Auto-set after Verify OTP (Bearer auth) |
 | `refresh_token` | *(empty)* | Auto-set after Verify OTP |
 | `request_id` | *(empty)* | Auto-set after Send OTP |
+| `otp` | `123456` | Auto-set from `debug_otp` when `APP_DEBUG=true` |
 | `offer_id` | `offer_001` | From home-jobs response |
 | `pro_id` | `1` | For customer pro detail |
 | `booking_id` | `1` | After create booking |
@@ -44,11 +46,8 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-Protected routes add:
-
-```text
-Authorization: Bearer {{access_token}}
-```
+Protected routes use **collection Bearer auth** (`Authorization: Bearer {{access_token}}`).  
+Run **01 Get Token → Verify OTP** first, or use folder **00 Flow — Login & Test**.
 
 ---
 
