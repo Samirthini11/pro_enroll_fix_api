@@ -8,6 +8,7 @@ use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\ReferenceData;
+use ProEnroll\Api\Services\CategoryRepository;
 
 /**
  * Flutter: CategorySelectScreen
@@ -38,6 +39,13 @@ final class OnboardCategoryScreen extends ScreenHandler
         $codes = $request->input('category_codes', []);
         if (!is_array($codes) || $codes === []) {
             Response::fail('category_codes array required', 422);
+            return;
+        }
+
+        $categories = new CategoryRepository();
+        $invalid = $categories->validateCodes(array_map('strval', $codes));
+        if ($invalid !== null) {
+            Response::fail("Unknown category code: $invalid", 422, 'invalid_category');
             return;
         }
 

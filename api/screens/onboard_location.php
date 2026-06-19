@@ -42,21 +42,36 @@ final class OnboardLocationScreen extends ScreenHandler
             return;
         }
 
-        $this->ensurePro($request);
-        $this->pros->updateProfile($this->uid($request), [
+        $fields = [
             'city_id' => $cityId,
             'work_radius_km' => max(1, min(25, $radius)),
-        ]);
+        ];
+
+        $rawLat = $request->input('home_lat');
+        $rawLng = $request->input('home_lng');
+        if (is_numeric($rawLat) && is_numeric($rawLng)) {
+            $fields['home_lat'] = round((float) $rawLat, 6);
+            $fields['home_lng'] = round((float) $rawLng, 6);
+        }
+
+        $this->ensurePro($request);
+        $this->pros->updateProfile($this->uid($request), $fields);
 
         $city = ReferenceData::cityById($cityId);
+        $mapLat = isset($fields['home_lat'])
+            ? (float) $fields['home_lat']
+            : (is_array($city) ? (float) $city['latitude'] : null);
+        $mapLng = isset($fields['home_lng'])
+            ? (float) $fields['home_lng']
+            : (is_array($city) ? (float) $city['longitude'] : null);
         Response::ok([
             'screen' => 'onboard_location',
             'city_id' => $cityId,
             'work_radius_km' => $radius,
-            'map' => $city ? [
-                'latitude' => $city['latitude'],
-                'longitude' => $city['longitude'],
-                'name' => $city['name'],
+            'map' => $mapLat !== null && $mapLng !== null ? [
+                'latitude' => $mapLat,
+                'longitude' => $mapLng,
+                'name' => is_array($city) ? ($city['name'] ?? null) : null,
             ] : null,
             'profile' => $this->pros->profilePayload($this->uid($request)),
         ]);
