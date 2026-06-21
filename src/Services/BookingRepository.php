@@ -27,8 +27,9 @@ final class BookingRepository
         $this->db->prepare(
             'INSERT INTO service_bookings
              (booking_code, customer_id, professional_id, category_code, problem_description,
-              address_text, city_id, status, visit_fee_paise, scheduled_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+              address_text, address_lat, address_lng, city_id, status, visit_fee_paise,
+              scheduled_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
         )->execute([
             $code,
             $data['customer_id'],
@@ -36,6 +37,8 @@ final class BookingRepository
             $data['category_code'],
             $data['problem_description'],
             $data['address_text'],
+            $data['address_lat'] ?? null,
+            $data['address_lng'] ?? null,
             $data['city_id'],
             'confirmed',
             $data['visit_fee_paise'],
@@ -155,6 +158,8 @@ final class BookingRepository
             'category_name' => $catName,
             'problem_description' => $row['problem_description'],
             'address_text' => $row['address_text'],
+            'address_lat' => $row['address_lat'] !== null ? (float) $row['address_lat'] : null,
+            'address_lng' => $row['address_lng'] !== null ? (float) $row['address_lng'] : null,
             'city_id' => (int) $row['city_id'],
             'city_name' => $city['name'] ?? '',
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
@@ -223,5 +228,254 @@ final class BookingRepository
             }
         }
         return $code;
+    }
+
+    // ─── Professional job offers (Jobs near you) ───────────────────────────
+
+    /** @return list<array<string, mixed>> */
+    public function listOffersForProfessional(int $professionalId, array $categoryCodes): array
+    {
+        if ($categoryCodes === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($categoryCodes), '?'));
+        $stmt = $this->db->prepare(
+            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+             FROM service_bookings b
+             INNER JOIN customers c ON c.id = b.customer_id
+             WHERE b.professional_id = ?
+               AND b.status = 'confirmed'
+               AND b.category_code IN ($placeholders)
+             ORDER BY b.created_at DESC"
+        );
+        $stmt->execute(array_merge([$professionalId], $categoryCodes));
+
+        return $stmt->fetchAll();
+    }
+
+    public function findOfferForProfessional(int $bookingId, int $professionalId): ?array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+             FROM service_bookings b
+             INNER JOIN customers c ON c.id = b.customer_id
+             WHERE b.id = ? AND b.professional_id = ? AND b.status = 'confirmed'
+             LIMIT 1"
+        );
+        $stmt->execute([$bookingId, $professionalId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function acceptOffer(int $bookingId, int $professionalId): ?array
+    {
+        $stmt = $this->db->prepare(
+            "UPDATE service_bookings
+             SET status = 'en_route', updated_at = NOW()
+             WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
+        );
+        $stmt->execute([$bookingId, $professionalId]);
+        if ($stmt->rowCount() === 0) {
+            return null;
+        }
+
+        return $this->findActiveForProfessional($professionalId, $bookingId);
+    }
+
+    public function rejectOffer(int $bookingId, int $professionalId): bool
+    {
+        $stmt = $this->db->prepare(
+            "UPDATE service_bookings
+             SET status = 'cancelled', updated_at = NOW()
+             WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
+        );
+        $stmt->execute([$bookingId, $professionalId]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
+    {
+        $sql = "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+                FROM service_bookings b
+                INNER JOIN customers c ON c.id = b.customer_id
+                WHERE b.professional_id = ?
+                  AND b.status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')";
+        $params = [$professionalId];
+        if ($bookingId !== null) {
+            $sql .= ' AND b.id = ?';
+            $params[] = $bookingId;
+        }
+        $sql .= ' ORDER BY b.updated_at DESC LIMIT 1';
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function updateActiveJobStatus(int $bookingId, int $professionalId, string $apiStatus): bool
+    {
+        $dbStatus = self::apiStatusToDb($apiStatus);
+        $stmt = $this->db->prepare(
+            "UPDATE service_bookings
+             SET status = ?, updated_at = NOW()
+             WHERE id = ? AND professional_id = ?
+               AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+        );
+        $stmt->execute([$dbStatus, $bookingId, $professionalId]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    public function completeActiveJob(int $bookingId, int $professionalId): bool
+    {
+        $stmt = $this->db->prepare(
+            "UPDATE service_bookings
+             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+             WHERE id = ? AND professional_id = ?
+               AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+        );
+        $stmt->execute([$bookingId, $professionalId]);
+        if ($stmt->rowCount() === 0) {
+            return false;
+        }
+
+        $this->db->prepare(
+            'UPDATE professionals SET jobs_completed = jobs_completed + 1, updated_at = NOW() WHERE id = ?'
+        )->execute([$professionalId]);
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    public function offerPayload(array $row, ?float $proLat = null, ?float $proLng = null): array
+    {
+        $created = strtotime((string) $row['created_at']) ?: time();
+        $scheduled = strtotime((string) $row['scheduled_at']) ?: $created + 3600;
+
+        return [
+            'id' => (string) $row['id'],
+            'code' => $row['booking_code'],
+            'category_code' => $row['category_code'],
+            'problem' => $row['problem_description'],
+            'customer_name' => self::customerDisplayName($row),
+            'customer_area_name' => $row['address_text'],
+            'distance_km' => self::distanceKm($row, $proLat, $proLng),
+            'visit_fee_paise' => (int) $row['visit_fee_paise'],
+            'preferred_time' => date(DATE_ATOM, $scheduled),
+            'expires_at' => date(DATE_ATOM, $created + 3600),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    public function activeJobPayload(array $row, ?float $proLat = null, ?float $proLng = null): array
+    {
+        return [
+            'id' => (string) $row['id'],
+            'code' => $row['booking_code'],
+            'category_code' => $row['category_code'],
+            'problem' => $row['problem_description'],
+            'customer_name' => self::customerDisplayName($row),
+            'customer_phone_masked' => ProRepository::maskPhone((string) ($row['customer_phone'] ?? '')),
+            'customer_address' => $row['address_text'],
+            'customer_area_name' => $row['address_text'],
+            'distance_km' => self::distanceKm($row, $proLat, $proLng),
+            'visit_fee_paise' => (int) $row['visit_fee_paise'],
+            'status' => self::dbStatusToApi((string) $row['status']),
+            'customer_lat' => $row['address_lat'] !== null ? (float) $row['address_lat'] : null,
+            'customer_lng' => $row['address_lng'] !== null ? (float) $row['address_lng'] : null,
+        ];
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function customerDisplayName(array $row): string
+    {
+        $name = trim((string) ($row['customer_name'] ?? ''));
+        if ($name !== '') {
+            return $name;
+        }
+
+        return 'Customer';
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function distanceKm(array $row, ?float $proLat, ?float $proLng): float
+    {
+        $bookingLat = isset($row['address_lat']) && $row['address_lat'] !== null
+            ? (float) $row['address_lat'] : null;
+        $bookingLng = isset($row['address_lng']) && $row['address_lng'] !== null
+            ? (float) $row['address_lng'] : null;
+
+        if ($proLat !== null && $proLng !== null && $bookingLat !== null && $bookingLng !== null) {
+            return ProRepository::haversineKm($proLat, $proLng, $bookingLat, $bookingLng);
+        }
+
+        $city = ReferenceData::cityById((int) $row['city_id']);
+        if ($proLat !== null && $proLng !== null && $city !== null) {
+            return ProRepository::haversineKm(
+                $proLat,
+                $proLng,
+                (float) $city['latitude'],
+                (float) $city['longitude'],
+            );
+        }
+
+        return round(0.8 + ((int) $row['id'] % 7) * 0.35, 1);
+    }
+
+    private static function apiStatusToDb(string $api): string
+    {
+        return match ($api) {
+            'on_the_way' => 'en_route',
+            'in_progress' => 'in_progress',
+            'completed' => 'completed',
+            'cancelled' => 'cancelled',
+            default => 'en_route',
+        };
+    }
+
+    private static function dbStatusToApi(string $db): string
+    {
+        return match ($db) {
+            'en_route' => 'on_the_way',
+            'in_progress' => 'in_progress',
+            'awaiting_payment' => 'in_progress',
+            'completed' => 'completed',
+            'cancelled' => 'cancelled',
+            default => 'accepted',
+        };
+    }
+
+    /**
+     * @return array{0: float|null, 1: float|null}
+     */
+    public static function parseGeoInput(mixed $lat, mixed $lng): array
+    {
+        if ($lat === null || $lat === '' || $lng === null || $lng === '') {
+            return [null, null];
+        }
+
+        if (!is_numeric($lat) || !is_numeric($lng)) {
+            throw new \InvalidArgumentException('Invalid address_lat or address_lng');
+        }
+
+        $latF = (float) $lat;
+        $lngF = (float) $lng;
+
+        if ($latF < -90 || $latF > 90 || $lngF < -180 || $lngF > 180) {
+            throw new \InvalidArgumentException('address_lat or address_lng out of range');
+        }
+
+        return [round($latF, 6), round($lngF, 6)];
     }
 }

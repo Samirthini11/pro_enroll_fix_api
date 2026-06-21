@@ -21,6 +21,7 @@ final class OnboardFeeScreen extends ScreenHandler
             Response::ok([
                 'screen' => 'onboard_fee',
                 'defaults_by_category' => ReferenceData::defaultFees(),
+                'base_prices_by_category' => ReferenceData::basePrices(),
             ]);
             return;
         }

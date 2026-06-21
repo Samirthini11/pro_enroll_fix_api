@@ -223,6 +223,9 @@ final class ProRepository
 
             if ($proLat !== null && $proLng !== null && $customerLat !== null && $customerLng !== null) {
                 $dist = self::haversineKm($customerLat, $customerLng, $proLat, $proLng);
+                if ($dist > (int) $pro['work_radius_km']) {
+                    continue;
+                }
             } else {
                 $dist = round(0.8 + ((int) $pro['id'] % 7) * 0.35, 1);
             }
@@ -254,7 +257,7 @@ final class ProRepository
         return $out;
     }
 
-    private static function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float
+    public static function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float
     {
         $r = 6371.0;
         $dLat = deg2rad($lat2 - $lat1);
@@ -292,7 +295,7 @@ final class ProRepository
         return null;
     }
 
-    private static function maskPhone(string $phone): string
+    public static function maskPhone(string $phone): string
     {
         if (strlen($phone) < 8) {
             return $phone;

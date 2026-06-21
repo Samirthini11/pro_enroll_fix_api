@@ -37,4 +37,24 @@ abstract class ScreenHandler
             $user['phone'] ?? null,
         );
     }
+
+    /** @return array<string, mixed>|null */
+    protected function proRow(Request $request): ?array
+    {
+        $uid = $this->uid($request);
+        if ($uid === '') {
+            return null;
+        }
+
+        return $this->pros->findByFirebaseUid($uid);
+    }
+
+    /** @param array<string, mixed> $pro */
+    protected function proCoords(array $pro): array
+    {
+        $lat = $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
+        $lng = $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
+
+        return [$lat, $lng];
+    }
 }

@@ -71,12 +71,24 @@ final class BookingsEndpoint
                 return;
             }
 
+            try {
+                [$addressLat, $addressLng] = BookingRepository::parseGeoInput(
+                    $request->input('address_lat'),
+                    $request->input('address_lng'),
+                );
+            } catch (\InvalidArgumentException $e) {
+                Response::fail($e->getMessage(), 422, 'validation');
+                return;
+            }
+
             $row = $bookings->create([
                 'customer_id' => $customerId,
                 'professional_id' => $proId,
                 'category_code' => $category,
                 'problem_description' => $problem,
                 'address_text' => $address,
+                'address_lat' => $addressLat,
+                'address_lng' => $addressLng,
                 'city_id' => $cityId,
                 'visit_fee_paise' => (int) ($request->input('visit_fee_paise') ?: $pro['visit_fee_paise']),
                 'scheduled_at' => date('Y-m-d H:i:s', $scheduledTs),

@@ -25,7 +25,7 @@ final class CategoryRepository
     {
         try {
             $stmt = $this->db->query(
-                'SELECT code, name_en, name_ta, icon_key, default_visit_fee_paise, sort_order
+                'SELECT code, name_en, name_ta, icon_key, default_visit_fee_paise, base_price_paise, sort_order
                  FROM service_categories
                  WHERE is_active = 1
                  ORDER BY sort_order ASC, name_en ASC'
@@ -46,6 +46,7 @@ final class CategoryRepository
                     'name_ta' => (string) $row['name_ta'],
                     'icon_key' => (string) ($row['icon_key'] ?? 'build'),
                     'default_visit_fee_paise' => (int) $row['default_visit_fee_paise'],
+                    'base_price_paise' => (int) ($row['base_price_paise'] ?? $row['default_visit_fee_paise']),
                     'sort_order' => (int) ($row['sort_order'] ?? 0),
                 ];
             }

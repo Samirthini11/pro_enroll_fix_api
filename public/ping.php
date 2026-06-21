@@ -94,7 +94,7 @@ $checks = [
 ];
 
 if ($checks['vendor']) {
-    require $root . '/vendor/autoload.php';
+    require_once $root . '/vendor/autoload.php';
     $checks['autoload_otp_send'] = class_exists(
         \ProEnroll\Api\Endpoints\Auth\OtpSendEndpoint::class,
         false
@@ -140,7 +140,7 @@ if ($checks['env']) {
 }
 
 if ($checks['vendor']) {
-    require $root . '/vendor/autoload.php';
+    require_once $root . '/vendor/autoload.php';
     \ProEnroll\Api\Config::load($root);
 
     $host = pingDbHost(pingEnv('DB_HOST', '127.0.0.1'));
