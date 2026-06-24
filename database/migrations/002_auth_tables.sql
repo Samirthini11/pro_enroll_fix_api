@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     phone_e164 VARCHAR(20) NOT NULL,
-    attempt_type ENUM('otp_send', 'otp_verify', 'refresh', 'logout') NOT NULL,
+    attempt_type ENUM(
+        'otp_send', 'otp_verify', 'refresh', 'logout',
+        'role_switch', 'firebase_session'
+    ) NOT NULL,
     success TINYINT(1) NOT NULL DEFAULT 0,
     ip_address VARCHAR(45) NULL,
     user_agent VARCHAR(255) NULL,

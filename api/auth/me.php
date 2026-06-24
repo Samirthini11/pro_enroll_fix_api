@@ -25,10 +25,9 @@ final class MeEndpoint
             return;
         }
 
-        $uid = (string) ($request->authUser['sub'] ?? '');
         try {
             $service = new AuthService();
-            Response::ok($service->me($uid));
+            Response::ok($service->me($request));
         } catch (\RuntimeException $e) {
             Response::fail($e->getMessage(), 404, 'not_found');
         }

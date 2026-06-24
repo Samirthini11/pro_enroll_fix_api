@@ -198,9 +198,27 @@ final class AuthService
         }
 
         $accessTtl = (int) Config::get('JWT_TTL_SECONDS', '604800');
+        $phone = (string) $row['phone_e164'];
+        $deviceLabel = (string) ($row['device_label'] ?? '');
+        $isCustomer = str_contains($deviceLabel, 'Customer');
+
+        if ($isCustomer) {
+            $customers = new CustomerRepository();
+            $customer = $customers->findByPhone($phone);
+            if ($customer === null) {
+                $customer = $customers->upsertFromPhone($phone);
+            }
+            $sub = (string) ($customer['auth_uid'] ?? $row['auth_uid']);
+            $role = 'customer';
+        } else {
+            $sub = (string) $row['auth_uid'];
+            $role = 'professional';
+        }
+
         $accessToken = JwtAuth::issue([
-            'sub' => (string) $row['auth_uid'],
-            'phone' => (string) $row['phone_e164'],
+            'sub' => $sub,
+            'phone' => $phone,
+            'role' => $role,
             'jti' => (string) $row['session_id'],
         ], $accessTtl);
 
@@ -217,31 +235,97 @@ final class AuthService
     /**
      * @return array<string, mixed>
      */
-    public function me(string $authUid): array
+    public function me(Request $request): array
     {
-        $account = $this->auth->findByAuthUid($authUid);
+        $authUid = (string) ($request->authUser['sub'] ?? '');
+        $phone = (string) ($request->authUser['phone'] ?? '');
+
+        if ($this->isCustomerJwt($request)) {
+            return $this->customerMePayload($authUid, $phone);
+        }
+
+        return $this->professionalMePayload($authUid, $phone);
+    }
+
+    private function isCustomerJwt(Request $request): bool
+    {
+        $jwtRole = (string) ($request->authUser['role'] ?? '');
+        if ($jwtRole === 'customer') {
+            return true;
+        }
+
+        $jti = (string) ($request->authUser['jti'] ?? '');
+        if ($jti === '') {
+            return false;
+        }
+
+        $session = $this->auth->findActiveSession($jti);
+
+        return $session !== null
+            && str_contains((string) ($session['device_label'] ?? ''), 'Customer');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function customerMePayload(string $authUid, string $phone): array
+    {
+        $customers = new CustomerRepository();
+        $customer = $customers->findByAuthUid($authUid);
+        if ($customer === null && $phone !== '') {
+            $customer = $customers->findByPhone($phone);
+        }
+        if ($customer === null) {
+            throw new \RuntimeException('Customer profile not found');
+        }
+
+        $custUid = (string) $customer['auth_uid'];
+        $account = $phone !== ''
+            ? $this->auth->findByPhone($phone)
+            : $this->auth->findByAuthUid($authUid);
         if ($account === null) {
             throw new \RuntimeException('Account not found');
         }
 
-        $customers = new CustomerRepository();
-        $customer = $customers->findByAuthUid($authUid);
-        if ($customer !== null && ($account['professional_id'] ?? null) === null) {
-            return [
-                'auth_uid' => $account['auth_uid'],
-                'phone_e164' => $account['phone_e164'],
-                'status' => $account['status'],
-                'role' => 'customer',
-                'profile' => $customers->profilePayload($authUid),
-            ];
+        return [
+            'auth_uid' => $custUid,
+            'phone_e164' => (string) $account['phone_e164'],
+            'status' => $account['status'],
+            'role' => 'customer',
+            'profile' => $customers->profilePayload($custUid),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function professionalMePayload(string $authUid, string $phone): array
+    {
+        $account = $this->auth->findByAuthUid($authUid);
+        if ($account === null && $phone !== '') {
+            $account = $this->auth->findByPhone($phone);
+        }
+        if ($account === null) {
+            throw new \RuntimeException('Account not found');
+        }
+
+        $proUid = $authUid;
+        $pro = $this->pros->findByFirebaseUid($authUid);
+        if ($pro === null && $phone !== '') {
+            $pro = $this->pros->findByPhone($phone);
+        }
+        if ($pro !== null) {
+            $proUid = (string) ($pro['firebase_uid'] ?? $account['auth_uid']);
+        } elseif ((string) $account['auth_uid'] !== '') {
+            $proUid = (string) $account['auth_uid'];
         }
 
         return [
-            'auth_uid' => $account['auth_uid'],
-            'phone_e164' => $account['phone_e164'],
+            'auth_uid' => $proUid,
+            'phone_e164' => (string) $account['phone_e164'],
             'status' => $account['status'],
             'role' => 'professional',
-            'profile' => $this->pros->profilePayload($authUid),
+            'profile' => $this->pros->profilePayload($proUid),
         ];
     }
 
