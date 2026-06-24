@@ -86,11 +86,7 @@ CREATE TABLE IF NOT EXISTS auth_accounts (
 
     updated_at DATETIME NOT NULL,
 
-    INDEX idx_auth_professional (professional_id),
-
-    CONSTRAINT fk_auth_professional
-
-        FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE SET NULL
+    INDEX idx_auth_professional (professional_id)
 
 ) ENGINE=InnoDB;
 
@@ -154,11 +150,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
     INDEX idx_auth_sessions_account (auth_account_id),
 
-    INDEX idx_auth_sessions_refresh (refresh_token_hash),
-
-    CONSTRAINT fk_auth_sessions_account
-
-        FOREIGN KEY (auth_account_id) REFERENCES auth_accounts(id) ON DELETE CASCADE
+    INDEX idx_auth_sessions_refresh (refresh_token_hash)
 
 ) ENGINE=InnoDB;
 
@@ -197,8 +189,6 @@ CREATE TABLE IF NOT EXISTS professional_skills (
     experience_years TINYINT UNSIGNED NOT NULL DEFAULT 0,
 
     is_primary TINYINT(1) NOT NULL DEFAULT 0,
-
-    FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE CASCADE,
 
     UNIQUE KEY uk_pro_cat (professional_id, category_code)
 
@@ -242,11 +232,7 @@ CREATE TABLE IF NOT EXISTS service_bookings (
     INDEX idx_booking_customer (customer_id),
     INDEX idx_booking_pro (professional_id),
     INDEX idx_booking_status (status),
-    INDEX idx_booking_geo (address_lat, address_lng),
-    CONSTRAINT fk_booking_customer
-        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-    CONSTRAINT fk_booking_professional
-        FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE RESTRICT
+    INDEX idx_booking_geo (address_lat, address_lng)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS booking_ratings (
@@ -254,9 +240,7 @@ CREATE TABLE IF NOT EXISTS booking_ratings (
     booking_id BIGINT UNSIGNED NOT NULL UNIQUE,
     stars TINYINT UNSIGNED NOT NULL,
     review_text VARCHAR(500) NULL,
-    created_at DATETIME NOT NULL,
-    CONSTRAINT fk_rating_booking
-        FOREIGN KEY (booking_id) REFERENCES service_bookings(id) ON DELETE CASCADE
+    created_at DATETIME NOT NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS service_categories (

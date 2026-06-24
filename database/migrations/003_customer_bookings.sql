@@ -31,11 +31,7 @@ CREATE TABLE IF NOT EXISTS service_bookings (
     updated_at DATETIME NOT NULL,
     INDEX idx_booking_customer (customer_id),
     INDEX idx_booking_pro (professional_id),
-    INDEX idx_booking_status (status),
-    CONSTRAINT fk_booking_customer
-        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-    CONSTRAINT fk_booking_professional
-        FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE RESTRICT
+    INDEX idx_booking_status (status)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS booking_ratings (
@@ -43,7 +39,5 @@ CREATE TABLE IF NOT EXISTS booking_ratings (
     booking_id BIGINT UNSIGNED NOT NULL UNIQUE,
     stars TINYINT UNSIGNED NOT NULL,
     review_text VARCHAR(500) NULL,
-    created_at DATETIME NOT NULL,
-    CONSTRAINT fk_rating_booking
-        FOREIGN KEY (booking_id) REFERENCES service_bookings(id) ON DELETE CASCADE
+    created_at DATETIME NOT NULL
 ) ENGINE=InnoDB;

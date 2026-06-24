@@ -11,9 +11,7 @@ CREATE TABLE IF NOT EXISTS auth_accounts (
     last_login_at DATETIME NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
-    INDEX idx_auth_professional (professional_id),
-    CONSTRAINT fk_auth_professional
-        FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE SET NULL
+    INDEX idx_auth_professional (professional_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -30,9 +28,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     created_at DATETIME NOT NULL,
     INDEX idx_auth_sessions_account (auth_account_id),
     INDEX idx_auth_sessions_refresh (refresh_token_hash),
-    INDEX idx_auth_sessions_revoked (revoked_at),
-    CONSTRAINT fk_auth_sessions_account
-        FOREIGN KEY (auth_account_id) REFERENCES auth_accounts(id) ON DELETE CASCADE
+    INDEX idx_auth_sessions_revoked (revoked_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
