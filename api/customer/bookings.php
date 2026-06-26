@@ -53,15 +53,19 @@ final class BookingsEndpoint
             $cityId = (int) $request->input('city_id', 1);
             $scheduled = (string) $request->input('scheduled_at', '');
 
-            if ($proId < 1 || $category === '' || $problem === '' || $address === '' || $scheduled === '') {
+            if ($proId < 1 || $category === '' || $problem === '' || $address === '') {
                 Response::fail('Missing required booking fields', 422, 'validation');
                 return;
             }
 
-            $scheduledTs = strtotime($scheduled);
-            if ($scheduledTs === false) {
-                Response::fail('Invalid scheduled_at datetime', 422, 'validation');
-                return;
+            if ($scheduled === '') {
+                $scheduledTs = time() + 3600;
+            } else {
+                $scheduledTs = strtotime($scheduled);
+                if ($scheduledTs === false) {
+                    Response::fail('Invalid scheduled_at datetime', 422, 'validation');
+                    return;
+                }
             }
 
             $pros = new ProRepository();

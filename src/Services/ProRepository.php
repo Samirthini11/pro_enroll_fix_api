@@ -149,7 +149,41 @@ final class ProRepository
     }
 
     /**
-     * Search enrolled technicians for customer app.
+     * Post-login / post-OTP route for enrolled professionals (sign-in or sign-up).
+     *
+     * @param array<string, mixed> $profile From [profilePayload]
+     */
+    public function resolveNextRouteFromProfile(array $profile): string
+    {
+        if (($profile['registered'] ?? false) !== true) {
+            return '/onboard/category';
+        }
+
+        $skills = $profile['skills'] ?? [];
+        if (!is_array($skills) || $skills === []) {
+            return '/onboard/category';
+        }
+
+        $fullName = $profile['full_name'] ?? null;
+        if (!is_string($fullName) || trim($fullName) === '') {
+            return '/onboard/experience';
+        }
+
+        if (($profile['city_id'] ?? null) === null) {
+            return '/onboard/location';
+        }
+
+        return match ((string) ($profile['kyc_status'] ?? 'not_started')) {
+            'verified' => '/home',
+            'in_review' => '/kyc/pending',
+            'aadhaar_pending' => '/kyc/aadhaar',
+            'selfie_pending' => '/kyc/selfie',
+            default => '/kyc',
+        };
+    }
+
+    /**
+     * Search enrolled technicians for customer app (online + verified KYC only).
      *
      * @return list<array<string, mixed>>
      */
@@ -163,8 +197,9 @@ final class ProRepository
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
+                  AND p.is_available = 1
                   AND p.city_id = ?
-                  AND p.kyc_status IN (\'verified\', \'in_review\')';
+                  AND p.kyc_status = \'verified\'';
         $params = [$cityId];
 
         if ($categoryCode !== null && $categoryCode !== '') {

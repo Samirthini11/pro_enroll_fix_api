@@ -136,12 +136,9 @@ final class AuthService
             $authUid = (string) ($pro['firebase_uid'] ?? '');
             $account = $this->auth->ensureAccount($phone, $authUid, (int) $pro['id']);
             $profile = $this->pros->profilePayload($authUid);
-            $isSignIn = $mode === 'sign_in';
-            $next = '/onboard/category';
+            $next = $this->pros->resolveNextRouteFromProfile($profile);
             if ($app === 'pro_fix') {
                 $next = '/dashboard';
-            } elseif ($isSignIn && ($profile['kyc_status'] ?? '') === 'verified') {
-                $next = '/home';
             }
             $role = 'professional';
         }

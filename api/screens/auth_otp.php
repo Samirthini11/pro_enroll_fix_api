@@ -25,20 +25,35 @@ final class AuthOtpScreen extends ScreenHandler
             return;
         }
 
+        $jwtRole = (string) ($request->authUser['role'] ?? '');
+        $jti = (string) ($request->authUser['jti'] ?? '');
+        if ($jwtRole === 'customer' || ($jti !== '' && $this->isCustomerSessionLabel($jti))) {
+            Response::ok([
+                'screen' => 'auth_otp',
+                'verified' => true,
+                'role' => 'customer',
+                'next_route' => '/customer/home',
+            ]);
+            return;
+        }
+
         $this->ensurePro($request);
         $profile = $this->pros->profilePayload($this->uid($request));
-        $isSignIn = (string) $request->input('mode', 'sign_up') === 'sign_in';
-
-        $next = '/onboard/category';
-        if ($isSignIn && ($profile['kyc_status'] ?? '') === 'verified') {
-            $next = '/home';
-        }
 
         Response::ok([
             'screen' => 'auth_otp',
             'verified' => true,
             'profile' => $profile,
-            'next_route' => $next,
+            'next_route' => $this->pros->resolveNextRouteFromProfile($profile),
         ]);
+    }
+
+    private function isCustomerSessionLabel(string $sessionId): bool
+    {
+        $auth = new \ProEnroll\Api\Services\AuthRepository();
+        $session = $auth->findActiveSession($sessionId);
+
+        return $session !== null
+            && str_contains((string) ($session['device_label'] ?? ''), 'Customer');
     }
 }
