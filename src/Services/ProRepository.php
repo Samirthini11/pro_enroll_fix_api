@@ -230,66 +230,105 @@ final class ProRepository
 
         $out = [];
         foreach ($rows as $pro) {
-            $skills = $this->getSkills((int) $pro['id']);
-            $primary = null;
-            foreach ($skills as $s) {
-                if ($s['is_primary']) {
-                    $primary = $s['category_code'];
-                    break;
-                }
+            $item = $this->buildCustomerProPayload(
+                $pro,
+                $categoryCode,
+                $customerLat,
+                $customerLng,
+                enforceRadius: true,
+            );
+            if ($item !== null) {
+                $out[] = $item;
             }
-            $primary ??= $skills[0]['category_code'] ?? 'ac';
-            if ($categoryCode !== null && $categoryCode !== '') {
-                $hasCat = false;
-                foreach ($skills as $s) {
-                    if ($s['category_code'] === $categoryCode) {
-                        $hasCat = true;
-                        $primary = $categoryCode;
-                        break;
-                    }
-                }
-                if (!$hasCat) {
-                    continue;
-                }
-            }
-
-            $proLat = $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
-            $proLng = $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
-
-            if ($proLat !== null && $proLng !== null && $customerLat !== null && $customerLng !== null) {
-                $dist = self::haversineKm($customerLat, $customerLng, $proLat, $proLng);
-                if ($dist > (int) $pro['work_radius_km']) {
-                    continue;
-                }
-            } else {
-                $dist = round(0.8 + ((int) $pro['id'] % 7) * 0.35, 1);
-            }
-
-            $out[] = [
-                'id' => (string) $pro['id'],
-                'full_name' => $pro['full_name'],
-                'phone_masked' => self::maskPhone($pro['phone_e164'] ?? ''),
-                'city_id' => (int) $pro['city_id'],
-                'work_radius_km' => (int) $pro['work_radius_km'],
-                'visit_fee_paise' => (int) $pro['visit_fee_paise'],
-                'is_available' => (bool) $pro['is_available'],
-                'kyc_verified' => $pro['kyc_status'] === 'verified',
-                'kyc_status' => $pro['kyc_status'],
-                'rating_avg' => (float) $pro['rating_avg'],
-                'rating_count' => (int) $pro['rating_count'],
-                'jobs_completed' => (int) $pro['jobs_completed'],
-                'pro_score' => (int) $pro['pro_score'],
-                'distance_km' => $dist,
-                'primary_category_code' => $primary,
-                'skills' => array_map(static fn ($s) => [
-                    'category_code' => $s['category_code'],
-                    'experience_years' => (int) $s['experience_years'],
-                    'is_primary' => (bool) $s['is_primary'],
-                ], $skills),
-            ];
         }
         usort($out, static fn ($a, $b) => $a['distance_km'] <=> $b['distance_km']);
         return $out;
+    }
+
+    /**
+     * Customer-facing pro card / detail payload.
+     *
+     * @param array<string, mixed> $pro Row from professionals table
+     * @return array<string, mixed>|null
+     */
+    public function buildCustomerProPayload(
+        array $pro,
+        ?string $categoryCode = null,
+        ?float $customerLat = null,
+        ?float $customerLng = null,
+        bool $enforceRadius = false,
+    ): ?array {
+        $skills = $this->getSkills((int) $pro['id']);
+        if ($skills === []) {
+            return null;
+        }
+
+        $primary = null;
+        foreach ($skills as $s) {
+            if ($s['is_primary']) {
+                $primary = $s['category_code'];
+                break;
+            }
+        }
+        $primary ??= $skills[0]['category_code'] ?? 'ac';
+
+        if ($categoryCode !== null && $categoryCode !== '') {
+            $hasCat = false;
+            foreach ($skills as $s) {
+                if ($s['category_code'] === $categoryCode) {
+                    $hasCat = true;
+                    $primary = $categoryCode;
+                    break;
+                }
+            }
+            if (!$hasCat) {
+                return null;
+            }
+        }
+
+        $cityId = (int) $pro['city_id'];
+        if ($customerLat === null || $customerLng === null) {
+            $city = \ProEnroll\Api\ReferenceData::cityById($cityId);
+            if ($city !== null) {
+                $customerLat = (float) $city['latitude'];
+                $customerLng = (float) $city['longitude'];
+            }
+        }
+
+        $proLat = $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
+        $proLng = $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
+
+        if ($proLat !== null && $proLng !== null && $customerLat !== null && $customerLng !== null) {
+            $dist = self::haversineKm($customerLat, $customerLng, $proLat, $proLng);
+            if ($enforceRadius && $dist > (int) $pro['work_radius_km']) {
+                return null;
+            }
+        } else {
+            $dist = round(0.8 + ((int) $pro['id'] % 7) * 0.35, 1);
+        }
+
+        return [
+            'id' => (string) $pro['id'],
+            'full_name' => $pro['full_name'],
+            'phone_masked' => self::maskPhone($pro['phone_e164'] ?? ''),
+            'city_id' => $cityId,
+            'work_radius_km' => (int) $pro['work_radius_km'],
+            'visit_fee_paise' => (int) $pro['visit_fee_paise'],
+            'is_available' => (bool) $pro['is_available'],
+            'kyc_verified' => $pro['kyc_status'] === 'verified',
+            'kyc_status' => $pro['kyc_status'],
+            'rating_avg' => (float) $pro['rating_avg'],
+            'rating_count' => (int) $pro['rating_count'],
+            'jobs_completed' => (int) $pro['jobs_completed'],
+            'pro_score' => (int) $pro['pro_score'],
+            'distance_km' => $dist,
+            'primary_category_code' => $primary,
+            'skills' => array_map(static fn ($s) => [
+                'category_code' => $s['category_code'],
+                'experience_years' => (int) $s['experience_years'],
+                'is_primary' => (bool) $s['is_primary'],
+            ], $skills),
+        ];
     }
 
     public static function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): float
@@ -312,22 +351,24 @@ final class ProRepository
     }
 
     /** @return array<string, mixed>|null */
-    public function customerDetail(int $id, ?string $categoryCode = null): ?array
-    {
+    public function customerDetail(
+        int $id,
+        ?string $categoryCode = null,
+        ?float $customerLat = null,
+        ?float $customerLng = null,
+    ): ?array {
         $pro = $this->findById($id);
-        if ($pro === null || $pro['full_name'] === null) {
+        if ($pro === null || $pro['full_name'] === null || trim((string) $pro['full_name']) === '') {
             return null;
         }
-        $list = $this->searchForCustomer(
-            (int) $pro['city_id'],
+
+        return $this->buildCustomerProPayload(
+            $pro,
             $categoryCode,
+            $customerLat,
+            $customerLng,
+            enforceRadius: false,
         );
-        foreach ($list as $item) {
-            if ($item['id'] === (string) $id) {
-                return $item;
-            }
-        }
-        return null;
     }
 
     public static function maskPhone(string $phone): string

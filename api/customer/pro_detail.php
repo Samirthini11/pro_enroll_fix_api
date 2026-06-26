@@ -22,8 +22,13 @@ final class ProDetailEndpoint
         $category = $request->input('category_code');
         $category = is_string($category) && $category !== '' ? $category : null;
 
+        $rawLat = $request->input('lat');
+        $rawLng = $request->input('lng');
+        $lat = is_numeric($rawLat) ? (float) $rawLat : null;
+        $lng = is_numeric($rawLng) ? (float) $rawLng : null;
+
         $pros = new ProRepository();
-        $detail = $pros->customerDetail($proId, $category);
+        $detail = $pros->customerDetail($proId, $category, $lat, $lng);
         if ($detail === null) {
             Response::fail('Technician not found', 404, 'not_found');
             return;
