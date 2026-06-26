@@ -156,7 +156,7 @@ final class JobActiveScreen extends ScreenHandler
 
 
 
-            if (!$bookings->completeActiveJob($bookingId, $proId)) {
+            if (!$bookings->completeActiveJob($bookingId, $proId, $amount)) {
 
                 Response::fail('Could not complete job', 400);
 

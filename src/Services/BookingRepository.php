@@ -163,6 +163,10 @@ final class BookingRepository
             'city_id' => (int) $row['city_id'],
             'city_name' => $city['name'] ?? '',
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
+            'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
+                ? (int) $row['final_amount_paise'] : null,
+            'total_due_paise' => self::totalDuePaise($row),
+            'status_label' => self::statusLabel((string) $row['status']),
             'scheduled_at' => date(DATE_ATOM, strtotime($row['scheduled_at'])),
             'completed_at' => $row['completed_at']
                 ? date(DATE_ATOM, strtotime($row['completed_at']))
@@ -172,6 +176,7 @@ final class BookingRepository
                 'id' => (string) $row['professional_id'],
                 'full_name' => $row['pro_name'],
                 'phone_e164' => $row['pro_phone'] ?? null,
+                'phone_masked' => ProRepository::maskPhone((string) ($row['pro_phone'] ?? '')),
                 'rating_avg' => (float) ($row['pro_rating_avg'] ?? 0),
                 'rating_count' => (int) ($row['pro_rating_count'] ?? 0),
                 'kyc_verified' => ($row['pro_kyc_status'] ?? '') === 'verified',
@@ -188,21 +193,53 @@ final class BookingRepository
         ];
     }
 
+    /** @param array<string, mixed> $row */
+    private static function totalDuePaise(array $row): int
+    {
+        $visitFee = (int) $row['visit_fee_paise'];
+        $final = isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
+            ? (int) $row['final_amount_paise'] : null;
+
+        if ($final !== null && $final >= 100) {
+            return $final;
+        }
+
+        return $visitFee;
+    }
+
+    public static function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'confirmed' => 'Booking confirmed',
+            'en_route' => 'Technician en route',
+            'arrived' => 'Arrived at your location',
+            'in_progress' => 'Repair in progress',
+            'awaiting_payment' => 'Awaiting payment',
+            'completed' => 'Work completed',
+            'cancelled' => 'Booking cancelled',
+            default => ucfirst(str_replace('_', ' ', $status)),
+        };
+    }
+
     /** @return list<array<string, mixed>> */
     private static function trackingSteps(string $current): array
     {
+        if ($current === 'cancelled') {
+            return [
+                ['key' => 'cancelled', 'label' => 'Booking cancelled', 'state' => 'active'],
+            ];
+        }
+
         $steps = [
             ['key' => 'confirmed', 'label' => 'Booking confirmed'],
             ['key' => 'en_route', 'label' => 'Technician en route'],
             ['key' => 'arrived', 'label' => 'Arrived at your location'],
             ['key' => 'in_progress', 'label' => 'Repair in progress'],
+            ['key' => 'awaiting_payment', 'label' => 'Payment due'],
             ['key' => 'completed', 'label' => 'Work completed'],
         ];
         $order = array_column($steps, 'key');
         $idx = array_search($current, $order, true);
-        if ($idx === false && $current === 'awaiting_payment') {
-            $idx = 3;
-        }
         if ($idx === false) {
             $idx = 0;
         }
@@ -331,15 +368,26 @@ final class BookingRepository
         return $stmt->rowCount() > 0;
     }
 
-    public function completeActiveJob(int $bookingId, int $professionalId): bool
+    public function completeActiveJob(int $bookingId, int $professionalId, ?int $finalAmountPaise = null): bool
     {
-        $stmt = $this->db->prepare(
-            "UPDATE service_bookings
-             SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-             WHERE id = ? AND professional_id = ?
-               AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
-        );
-        $stmt->execute([$bookingId, $professionalId]);
+        if ($finalAmountPaise !== null && $finalAmountPaise >= 100) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+                     final_amount_paise = ?
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+            );
+            $stmt->execute([$finalAmountPaise, $bookingId, $professionalId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+            );
+            $stmt->execute([$bookingId, $professionalId]);
+        }
         if ($stmt->rowCount() === 0) {
             return false;
         }
@@ -386,6 +434,7 @@ final class BookingRepository
             'category_code' => $row['category_code'],
             'problem' => $row['problem_description'],
             'customer_name' => self::customerDisplayName($row),
+            'customer_phone_e164' => $row['customer_phone'] ?? null,
             'customer_phone_masked' => ProRepository::maskPhone((string) ($row['customer_phone'] ?? '')),
             'customer_address' => $row['address_text'],
             'customer_area_name' => $row['address_text'],

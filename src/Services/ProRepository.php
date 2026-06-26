@@ -194,13 +194,19 @@ final class ProRepository
         ?float $customerLat = null,
         ?float $customerLng = null,
     ): array {
+        $useGeo = $customerLat !== null && $customerLng !== null;
+
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
                   AND p.is_available = 1
-                  AND p.city_id = ?
                   AND p.kyc_status = \'verified\'';
-        $params = [$cityId];
+        $params = [];
+
+        if (!$useGeo) {
+            $sql .= ' AND p.city_id = ?';
+            $params[] = $cityId;
+        }
 
         if ($categoryCode !== null && $categoryCode !== '') {
             $sql .= ' AND ps.category_code = ?';
@@ -241,7 +247,11 @@ final class ProRepository
                 $out[] = $item;
             }
         }
-        usort($out, static fn ($a, $b) => $a['distance_km'] <=> $b['distance_km']);
+        usort($out, static function (array $a, array $b): int {
+            $da = $a['distance_km'] ?? PHP_FLOAT_MAX;
+            $db = $b['distance_km'] ?? PHP_FLOAT_MAX;
+            return $da <=> $db;
+        });
         return $out;
     }
 
@@ -298,18 +308,30 @@ final class ProRepository
         $proLat = $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
         $proLng = $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
 
-        if ($proLat !== null && $proLng !== null && $customerLat !== null && $customerLng !== null) {
-            $dist = self::haversineKm($customerLat, $customerLng, $proLat, $proLng);
-            if ($enforceRadius && $dist > (int) $pro['work_radius_km']) {
+        $dist = null;
+        if ($customerLat !== null && $customerLng !== null) {
+            if ($proLat !== null && $proLng !== null) {
+                $dist = self::haversineKm($customerLat, $customerLng, $proLat, $proLng);
+            } else {
+                $city = \ProEnroll\Api\ReferenceData::cityById($cityId);
+                if ($city !== null) {
+                    $dist = self::haversineKm(
+                        $customerLat,
+                        $customerLng,
+                        (float) $city['latitude'],
+                        (float) $city['longitude'],
+                    );
+                }
+            }
+            if ($dist !== null && $enforceRadius && $dist > (int) $pro['work_radius_km']) {
                 return null;
             }
-        } else {
-            $dist = round(0.8 + ((int) $pro['id'] % 7) * 0.35, 1);
         }
 
         return [
             'id' => (string) $pro['id'],
             'full_name' => $pro['full_name'],
+            'phone_e164' => $pro['phone_e164'] ?? null,
             'phone_masked' => self::maskPhone($pro['phone_e164'] ?? ''),
             'city_id' => $cityId,
             'work_radius_km' => (int) $pro['work_radius_km'],

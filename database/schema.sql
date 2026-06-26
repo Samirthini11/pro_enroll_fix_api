@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS service_bookings (
         'in_progress', 'awaiting_payment', 'completed', 'cancelled'
     ) NOT NULL DEFAULT 'confirmed',
     visit_fee_paise INT UNSIGNED NOT NULL DEFAULT 15000,
+    final_amount_paise INT UNSIGNED NULL,
     scheduled_at DATETIME NOT NULL,
     completed_at DATETIME NULL,
     created_at DATETIME NOT NULL,
