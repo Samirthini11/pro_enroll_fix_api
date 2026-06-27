@@ -15,6 +15,19 @@ use ProEnroll\Api\Services\BookingRepository;
  */
 final class HomeEarningsScreen extends ScreenHandler
 {
+    /** @return array<string, int> */
+    private static function emptySummary(): array
+    {
+        return [
+            'today_paise' => 0,
+            'week_paise' => 0,
+            'month_paise' => 0,
+            'payouts_this_month_paise' => 0,
+            'pending_payout_paise' => 0,
+            'jobs_today' => 0,
+        ];
+    }
+
     public function handle(Request $request): void
     {
         if (!$this->requireAuth($request)) {
@@ -30,22 +43,20 @@ final class HomeEarningsScreen extends ScreenHandler
         if ($pro === null) {
             Response::ok([
                 'screen' => 'home_earnings',
-                'summary' => [
-                    'today_paise' => 0,
-                    'week_paise' => 0,
-                    'month_paise' => 0,
-                    'payouts_this_month_paise' => 0,
-                    'pending_payout_paise' => 0,
-                    'jobs_today' => 0,
-                ],
+                'summary' => self::emptySummary(),
                 'rating_avg' => 0,
                 'rating_count' => 0,
+                'jobs_completed' => 0,
             ]);
             return;
         }
 
-        $bookings = new BookingRepository();
-        $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
+        try {
+            $bookings = new BookingRepository();
+            $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
+        } catch (\Throwable) {
+            $summary = self::emptySummary();
+        }
 
         Response::ok([
             'screen' => 'home_earnings',

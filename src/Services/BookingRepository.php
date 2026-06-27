@@ -12,6 +12,9 @@ final class BookingRepository
 {
     private PDO $db;
 
+    /** @var bool|null Cached schema probe for optional final_amount_paise column. */
+    private static ?bool $hasFinalAmountColumn = null;
+
     public function __construct()
     {
         $this->db = Database::connection();
@@ -370,7 +373,7 @@ final class BookingRepository
 
     public function completeActiveJob(int $bookingId, int $professionalId, ?int $finalAmountPaise = null): bool
     {
-        if ($finalAmountPaise !== null && $finalAmountPaise >= 100) {
+        if ($finalAmountPaise !== null && $finalAmountPaise >= 100 && $this->hasFinalAmountColumn()) {
             $stmt = $this->db->prepare(
                 "UPDATE service_bookings
                  SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
@@ -535,7 +538,7 @@ final class BookingRepository
      */
     public function earningsSummaryForProfessional(int $professionalId): array
     {
-        $amount = 'COALESCE(NULLIF(final_amount_paise, 0), visit_fee_paise)';
+        $amount = $this->earningsAmountExpression();
 
         $stmt = $this->db->prepare(
             "SELECT
@@ -550,19 +553,50 @@ final class BookingRepository
                AND completed_at IS NOT NULL"
         );
         $stmt->execute([$professionalId]);
-        $row = $stmt->fetch() ?: [];
+        $row = $stmt->fetch();
+
+        if (!is_array($row)) {
+            $row = [];
+        }
 
         $today = (int) ($row['today_paise'] ?? 0);
-        $month = (int) ($row['month_paise'] ?? 0);
-        $paidThisMonth = (int) ($row['payouts_this_month_paise'] ?? 0);
 
         return [
             'today_paise' => $today,
             'week_paise' => (int) ($row['week_paise'] ?? 0),
-            'month_paise' => $month,
-            'payouts_this_month_paise' => $paidThisMonth,
+            'month_paise' => (int) ($row['month_paise'] ?? 0),
+            'payouts_this_month_paise' => (int) ($row['payouts_this_month_paise'] ?? 0),
             'pending_payout_paise' => $today,
             'jobs_today' => (int) ($row['jobs_today'] ?? 0),
         ];
+    }
+
+    private function earningsAmountExpression(): string
+    {
+        return $this->hasFinalAmountColumn()
+            ? 'COALESCE(NULLIF(final_amount_paise, 0), visit_fee_paise)'
+            : 'visit_fee_paise';
+    }
+
+    private function hasFinalAmountColumn(): bool
+    {
+        if (self::$hasFinalAmountColumn !== null) {
+            return self::$hasFinalAmountColumn;
+        }
+
+        try {
+            $stmt = $this->db->query(
+                "SELECT 1 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'service_bookings'
+                   AND COLUMN_NAME = 'final_amount_paise'
+                 LIMIT 1"
+            );
+            self::$hasFinalAmountColumn = $stmt !== false && $stmt->fetch() !== false;
+        } catch (\Throwable) {
+            self::$hasFinalAmountColumn = false;
+        }
+
+        return self::$hasFinalAmountColumn;
     }
 }
