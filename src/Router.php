@@ -38,6 +38,7 @@ use ProEnroll\Api\Endpoints\Customer\CitiesEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProDetailEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProfileEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProsSearchEndpoint;
+use ProEnroll\Api\Endpoints\Device\PushTokenEndpoint;
 use ProEnroll\Api\Endpoints\Screens\SplashScreen;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
@@ -54,6 +55,7 @@ final class Router
         'GET /v1/auth/validate' => ValidateEndpoint::class,
         'POST /v1/auth/logout' => LogoutEndpoint::class,
         'POST /v1/auth/switch-role' => SwitchRoleEndpoint::class,
+        'POST /v1/device/push-token' => PushTokenEndpoint::class,
         'GET /v1/screens/splash' => SplashScreen::class,
         'GET /v1/screens/auth-landing' => AuthLandingScreen::class,
         'GET /v1/screens/auth-phone' => AuthPhoneScreen::class,
