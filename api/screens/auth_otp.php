@@ -7,6 +7,7 @@ namespace ProEnroll\Api\Endpoints\Screens;
 use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
+use ProEnroll\Api\Services\CustomerRepository;
 
 /**
  * Flutter: OtpVerifyScreen — OTP verified via POST /v1/auth/otp/verify (JWT issued).
@@ -28,11 +29,17 @@ final class AuthOtpScreen extends ScreenHandler
         $jwtRole = (string) ($request->authUser['role'] ?? '');
         $jti = (string) ($request->authUser['jti'] ?? '');
         if ($jwtRole === 'customer' || ($jti !== '' && $this->isCustomerSessionLabel($jti))) {
+            $customers = new CustomerRepository();
+            $authUid = (string) ($request->authUser['sub'] ?? '');
+            $profile = $authUid !== ''
+                ? $customers->profilePayload($authUid)
+                : ['registered' => false];
             Response::ok([
                 'screen' => 'auth_otp',
                 'verified' => true,
                 'role' => 'customer',
-                'next_route' => '/customer/home',
+                'profile' => $profile,
+                'next_route' => $customers->resolveNextRouteFromProfile($profile),
             ]);
             return;
         }

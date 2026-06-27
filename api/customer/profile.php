@@ -56,7 +56,12 @@ final class ProfileEndpoint
                 Response::fail('full_name is required', 422, 'validation');
                 return;
             }
-            $updated = $customers->updateProfile($customerId, ['full_name' => $name]);
+            $fields = ['full_name' => $name];
+            $cityRaw = $request->input('city_id');
+            if ($cityRaw !== null && $cityRaw !== '') {
+                $fields['city_id'] = (int) $cityRaw;
+            }
+            $updated = $customers->updateProfile($customerId, $fields);
             Response::ok(['profile' => $customers->profilePayload((string) $updated['auth_uid'])]);
             return;
         }

@@ -95,7 +95,7 @@ final class CustomerRepository
 
         $photo = $c['profile_photo_url'] ?? null;
 
-        return [
+        $payload = [
             'registered' => true,
             'full_name' => $c['full_name'],
             'phone_e164' => $c['phone_e164'],
@@ -103,5 +103,28 @@ final class CustomerRepository
             'profile_photo_url' => is_string($photo) && $photo !== '' ? $photo : null,
             'has_profile_photo' => is_string($photo) && $photo !== '',
         ];
+        $payload['profile_complete'] = self::isProfileComplete($payload);
+
+        return $payload;
+    }
+
+    /** @param array<string, mixed> $profile */
+    public static function isProfileComplete(array $profile): bool
+    {
+        if (($profile['registered'] ?? false) !== true) {
+            return false;
+        }
+
+        $name = trim((string) ($profile['full_name'] ?? ''));
+
+        return $name !== '' && ($profile['city_id'] ?? null) !== null;
+    }
+
+    /** @param array<string, mixed> $profile */
+    public function resolveNextRouteFromProfile(array $profile): string
+    {
+        return self::isProfileComplete($profile)
+            ? '/customer/home'
+            : '/customer/profile-setup';
     }
 }

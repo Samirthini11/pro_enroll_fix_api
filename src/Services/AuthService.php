@@ -129,7 +129,7 @@ final class AuthService
             $authUid = (string) $customer['auth_uid'];
             $account = $this->auth->ensureCustomerAccount($phone, $authUid);
             $profile = $customers->profilePayload($authUid);
-            $next = '/customer/home';
+            $next = $customers->resolveNextRouteFromProfile($profile);
             $role = 'customer';
         } else {
             $pro = $this->pros->upsertFromPhone($phone);
