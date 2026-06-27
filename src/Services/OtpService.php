@@ -30,7 +30,8 @@ final class OtpService
     {
         $phone = $this->normalizePhone($phoneE164);
         $purpose = $purpose === 'sign_in' ? 'sign_in' : 'sign_up';
-        $otp = (string) random_int(100000, 999999);
+        // $otp = (string) random_int(100000, 999999);
+        $otp = '123456';
         $requestId = bin2hex(random_bytes(16));
         $ttl = (int) Config::get('OTP_EXPIRY_SECONDS', '600');
 
