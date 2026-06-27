@@ -527,4 +527,42 @@ final class BookingRepository
 
         return [round($latF, 6), round($lngF, 6)];
     }
+
+    /**
+     * Completed-job earnings for professional home tab (amount = final bill or visit fee).
+     *
+     * @return array<string, int>
+     */
+    public function earningsSummaryForProfessional(int $professionalId): array
+    {
+        $amount = 'COALESCE(NULLIF(final_amount_paise, 0), visit_fee_paise)';
+
+        $stmt = $this->db->prepare(
+            "SELECT
+                COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN $amount ELSE 0 END), 0) AS today_paise,
+                COALESCE(SUM(CASE WHEN completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN $amount ELSE 0 END), 0) AS week_paise,
+                COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) THEN $amount ELSE 0 END), 0) AS month_paise,
+                COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN 1 ELSE 0 END), 0) AS jobs_today,
+                COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise
+             FROM service_bookings
+             WHERE professional_id = ?
+               AND status = 'completed'
+               AND completed_at IS NOT NULL"
+        );
+        $stmt->execute([$professionalId]);
+        $row = $stmt->fetch() ?: [];
+
+        $today = (int) ($row['today_paise'] ?? 0);
+        $month = (int) ($row['month_paise'] ?? 0);
+        $paidThisMonth = (int) ($row['payouts_this_month_paise'] ?? 0);
+
+        return [
+            'today_paise' => $today,
+            'week_paise' => (int) ($row['week_paise'] ?? 0),
+            'month_paise' => $month,
+            'payouts_this_month_paise' => $paidThisMonth,
+            'pending_payout_paise' => $today,
+            'jobs_today' => (int) ($row['jobs_today'] ?? 0),
+        ];
+    }
 }
