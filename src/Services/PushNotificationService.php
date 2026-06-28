@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api\Services;
 
-use Kreait\Firebase\Factory;
+use Kreait\Firebase\Messaging\AndroidConfig;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
-use ProEnroll\Api\Auth\FirebaseAuth;
+use ProEnroll\Api\Auth\FirebaseCredentials;
 
 final class PushNotificationService
 {
     public function isConfigured(): bool
     {
-        return FirebaseAuth::isConfigured();
+        return FirebaseCredentials::isAvailable();
     }
 
     /**
@@ -28,7 +28,7 @@ final class PushNotificationService
         $tokens = array_values(array_unique(array_filter($tokens)));
         if ($tokens === [] || !$this->isConfigured()) {
             if ($tokens !== [] && !$this->isConfigured()) {
-                error_log('FCM skipped: firebase-service-account.json not configured on server');
+                error_log('FCM skipped: ' . FirebaseCredentials::setupHint());
             }
             return 0;
         }
@@ -40,14 +40,24 @@ final class PushNotificationService
         $payload['title'] = $title;
         $payload['body'] = $body;
 
-        $messaging = $this->messaging();
+        $messaging = FirebaseCredentials::messaging();
         $sent = 0;
 
         foreach ($tokens as $token) {
             try {
                 $message = CloudMessage::withTarget('token', $token)
                     ->withNotification(Notification::create($title, $body))
-                    ->withData($payload);
+                    ->withData($payload)
+                    ->withAndroidConfig(
+                        AndroidConfig::fromArray([
+                            'priority' => 'high',
+                            'notification' => [
+                                'channel_id' => 'proconnect_alerts',
+                                'sound' => 'default',
+                                'notification_priority' => 'PRIORITY_HIGH',
+                            ],
+                        ]),
+                    );
                 $messaging->send($message);
                 $sent++;
             } catch (\Throwable $e) {
@@ -62,6 +72,12 @@ final class PushNotificationService
     {
         $tokens = $this->professionalTokens($pro);
         if ($tokens === []) {
+            error_log(sprintf(
+                'Pro push: no tokens (pro_id=%s phone=%s booking_id=%s)',
+                (string) ($pro['id'] ?? ''),
+                (string) ($pro['phone_e164'] ?? ''),
+                (string) ($booking['id'] ?? ''),
+            ));
             return 0;
         }
 
@@ -220,10 +236,20 @@ final class PushNotificationService
         $authUid = (string) ($pro['firebase_uid'] ?? '');
         $phone = (string) ($pro['phone_e164'] ?? '');
 
-        return array_values(array_unique(array_merge(
+        $tokens = array_values(array_unique(array_merge(
             $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'professional') : [],
             $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
         )));
+
+        // Same device often registers under customer role only — include those too.
+        if ($phone !== '') {
+            $tokens = array_values(array_unique(array_merge(
+                $tokens,
+                $repo->tokensForPhone($phone, 'customer'),
+            )));
+        }
+
+        return $tokens;
     }
 
     /** @param array<string, mixed> $booking */
@@ -269,6 +295,7 @@ final class PushNotificationService
         return array_values(array_unique(array_merge(
             $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'customer') : [],
             $phone !== '' ? $repo->tokensForPhone($phone, 'customer') : [],
+            $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
         )));
     }
 
@@ -308,34 +335,5 @@ final class PushNotificationService
         }
 
         return (new ProRepository())->findById($proId);
-    }
-
-    private function messaging(): \Kreait\Firebase\Contract\Messaging
-    {
-        $path = $this->credentialsPath();
-        if ($path === null) {
-            throw new \RuntimeException('Firebase service account JSON not found');
-        }
-
-        return (new Factory())
-            ->withServiceAccount($path)
-            ->createMessaging();
-    }
-
-    private function credentialsPath(): ?string
-    {
-        $configured = \ProEnroll\Api\Config::get('FIREBASE_CREDENTIALS');
-        if ($configured !== null && $configured !== '') {
-            if (is_readable($configured)) {
-                return $configured;
-            }
-            $rootRelative = dirname(__DIR__, 2) . '/' . ltrim($configured, '/');
-            if (is_readable($rootRelative)) {
-                return $rootRelative;
-            }
-        }
-
-        $default = dirname(__DIR__, 2) . '/config/firebase-service-account.json';
-        return is_readable($default) ? $default : null;
     }
 }

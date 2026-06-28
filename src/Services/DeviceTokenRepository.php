@@ -70,12 +70,14 @@ final class DeviceTokenRepository
     /** @return list<string> */
     public function tokensForPhone(string $phoneE164, ?string $role = null): array
     {
-        if ($phoneE164 === '' || !$this->tableExists()) {
+        $variants = self::phoneVariants($phoneE164);
+        if ($variants === [] || !$this->tableExists()) {
             return [];
         }
 
-        $sql = 'SELECT fcm_token FROM push_device_tokens WHERE phone_e164 = ?';
-        $params = [$phoneE164];
+        $placeholders = implode(',', array_fill(0, count($variants), '?'));
+        $sql = "SELECT fcm_token FROM push_device_tokens WHERE phone_e164 IN ({$placeholders})";
+        $params = $variants;
         if ($role !== null) {
             $sql .= ' AND role = ?';
             $params[] = $role;
@@ -103,6 +105,61 @@ final class DeviceTokenRepository
         $stmt->execute([$customerId, 'customer']);
 
         return $this->extractTokens($stmt->fetchAll() ?: []);
+    }
+
+    /** @return list<array{role: string, phone_e164: string, fcm_token: string}> */
+    public function listRecentTokens(int $limit = 10): array
+    {
+        if (!$this->tableExists() || $limit < 1) {
+            return [];
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT role, phone_e164, fcm_token
+             FROM push_device_tokens
+             ORDER BY updated_at DESC
+             LIMIT ' . (int) $limit
+        );
+        $stmt->execute();
+
+        $rows = $stmt->fetchAll() ?: [];
+        $out = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $out[] = [
+                'role' => (string) ($row['role'] ?? ''),
+                'phone_e164' => (string) ($row['phone_e164'] ?? ''),
+                'fcm_token' => (string) ($row['fcm_token'] ?? ''),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> */
+    public static function phoneVariants(string $phoneE164): array
+    {
+        $phone = trim($phoneE164);
+        if ($phone === '') {
+            return [];
+        }
+
+        $variants = [$phone];
+
+        if (str_starts_with($phone, '+91') && strlen($phone) >= 12) {
+            $variants[] = substr($phone, 1);
+            $variants[] = '0' . substr($phone, 3);
+        } elseif (str_starts_with($phone, '91') && strlen($phone) >= 11) {
+            $variants[] = '+' . $phone;
+            $variants[] = '0' . substr($phone, 2);
+        } elseif (str_starts_with($phone, '0') && strlen($phone) >= 10) {
+            $variants[] = '+91' . substr($phone, 1);
+            $variants[] = '91' . substr($phone, 1);
+        }
+
+        return array_values(array_unique($variants));
     }
 
     private function ensureTable(): void

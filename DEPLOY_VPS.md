@@ -71,6 +71,8 @@ DB_PORT=3306
 DB_NAME=pro_enroll
 DB_USER=proadmin
 DB_PASS=Krishna@123
+FIREBASE_CREDENTIALS=config/firebase-service-account.json
+FIREBASE_PROJECT_ID=proenroll-4ff13
 ```
 
 **Do not** set `APP_URL` to `.../pro_enroll_api/public` — use the base path only.
@@ -114,13 +116,14 @@ sudo systemctl reload apache2
 |-----|----------|
 | http://98.93.105.128/pro_enroll_api/ping.php | JSON with `"ok": true` |
 | http://98.93.105.128/pro_enroll_api/v1/screens/splash | JSON `"success": true` |
-| http://98.93.105.128/pro_enroll_api/test_connection.php | `"db": "OK"` |
+| http://98.93.105.128/pro_enroll_api/v1/health/push | JSON `"fcm_http_v1_ready": true` (503 until service account JSON is on server) |
 
 Quick test:
 
 ```bash
 curl -s http://98.93.105.128/pro_enroll_api/v1/screens/splash
 curl -s http://98.93.105.128/pro_enroll_api/ping.php
+curl -s http://98.93.105.128/pro_enroll_api/v1/health/push
 ```
 
 ## 7. Flutter app (live API)
