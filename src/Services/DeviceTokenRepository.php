@@ -86,6 +86,25 @@ final class DeviceTokenRepository
         return $this->extractTokens($stmt->fetchAll() ?: []);
     }
 
+    /** @return list<string> */
+    public function tokensForCustomerId(int $customerId): array
+    {
+        if ($customerId < 1 || !$this->tableExists()) {
+            return [];
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT pdt.fcm_token
+             FROM push_device_tokens pdt
+             INNER JOIN customers c
+               ON c.auth_uid = pdt.auth_uid OR c.phone_e164 = pdt.phone_e164
+             WHERE c.id = ? AND pdt.role = ?'
+        );
+        $stmt->execute([$customerId, 'customer']);
+
+        return $this->extractTokens($stmt->fetchAll() ?: []);
+    }
+
     private function ensureTable(): void
     {
         if (self::$tableReady) {

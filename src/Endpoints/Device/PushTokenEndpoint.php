@@ -8,7 +8,9 @@ use ProEnroll\Api\Config;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Middleware\JwtTokenMiddleware;
+use ProEnroll\Api\Services\CustomerRepository;
 use ProEnroll\Api\Services\DeviceTokenRepository;
+use ProEnroll\Api\Services\ProRepository;
 
 /**
  * POST /v1/device/push-token
@@ -44,10 +46,15 @@ final class PushTokenEndpoint
             $role = $jwtRole === 'customer' ? 'customer' : 'professional';
         }
 
-        $authUid = (string) ($request->authUser['sub'] ?? '');
-        $phone = (string) ($request->authUser['phone'] ?? '');
-        if ($authUid === '' || $phone === '') {
+        $phone = trim((string) ($request->authUser['phone'] ?? ''));
+        if ($phone === '') {
             Response::fail('Invalid session', 401, 'unauthorized');
+            return;
+        }
+
+        $authUid = $this->resolveAuthUid($phone, $role, (string) ($request->authUser['sub'] ?? ''));
+        if ($authUid === '') {
+            Response::fail('Could not resolve account for push token', 422, 'validation');
             return;
         }
 
@@ -71,6 +78,23 @@ final class PushTokenEndpoint
             return;
         }
 
-        Response::ok(['registered' => true, 'role' => $role]);
+        Response::ok(['registered' => true, 'role' => $role, 'auth_uid' => $authUid]);
+    }
+
+    private function resolveAuthUid(string $phone, string $role, string $jwtSub): string
+    {
+        if ($role === 'customer') {
+            $customer = (new CustomerRepository())->findByPhone($phone);
+            if ($customer !== null) {
+                return (string) $customer['auth_uid'];
+            }
+        } else {
+            $pro = (new ProRepository())->findByPhone($phone);
+            if ($pro !== null) {
+                return (string) ($pro['firebase_uid'] ?? '');
+            }
+        }
+
+        return $jwtSub;
     }
 }

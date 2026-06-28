@@ -109,6 +109,11 @@ final class PushNotificationService
         $pro ??= $this->proForBooking($booking);
         $tokens = $this->customerTokensForBooking($booking);
         if ($tokens === []) {
+            error_log(sprintf(
+                'Customer accept push skipped: no tokens (booking_id=%s customer_id=%s)',
+                (string) ($booking['id'] ?? ''),
+                (string) ($booking['customer_id'] ?? ''),
+            ));
             return 0;
         }
 
@@ -224,17 +229,25 @@ final class PushNotificationService
     /** @param array<string, mixed> $booking */
     private function customerTokensForBooking(array $booking): array
     {
+        $repo = new DeviceTokenRepository();
+        $tokens = [];
+
         $customerId = (int) ($booking['customer_id'] ?? 0);
-        if ($customerId < 1) {
-            return [];
+        if ($customerId >= 1) {
+            $tokens = array_merge($tokens, $repo->tokensForCustomerId($customerId));
+
+            $customer = (new CustomerRepository())->findById($customerId);
+            if ($customer !== null) {
+                $tokens = array_merge($tokens, $this->customerTokens($customer));
+            }
         }
 
-        $customer = (new CustomerRepository())->findById($customerId);
-        if ($customer === null) {
-            return [];
+        $phone = trim((string) ($booking['customer_phone'] ?? ''));
+        if ($phone !== '') {
+            $tokens = array_merge($tokens, $repo->tokensForPhone($phone, 'customer'));
         }
 
-        return $this->customerTokens($customer);
+        return array_values(array_unique(array_filter($tokens)));
     }
 
     /** @param array<string, mixed> $customer */
