@@ -31,6 +31,11 @@ final class PushNotificationService
             return 0;
         }
 
+        $payload = [];
+        foreach ($data as $key => $value) {
+            $payload[(string) $key] = (string) $value;
+        }
+
         $messaging = $this->messaging();
         $sent = 0;
 
@@ -38,13 +43,11 @@ final class PushNotificationService
             try {
                 $message = CloudMessage::withTarget('token', $token)
                     ->withNotification(Notification::create($title, $body))
-                    ->withData($data);
+                    ->withData($payload);
                 $messaging->send($message);
                 $sent++;
             } catch (\Throwable $e) {
-                if (Config::bool('APP_DEBUG')) {
-                    error_log('FCM send failed: ' . $e->getMessage());
-                }
+                error_log('FCM send failed for token: ' . $e->getMessage());
             }
         }
 
@@ -53,12 +56,19 @@ final class PushNotificationService
 
     public function notifyProfessionalNewBooking(array $pro, array $booking): int
     {
+        $repo = new DeviceTokenRepository();
         $authUid = (string) ($pro['firebase_uid'] ?? '');
-        if ($authUid === '') {
+        $phone = (string) ($pro['phone_e164'] ?? '');
+
+        $tokens = array_unique(array_merge(
+            $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'professional') : [],
+            $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
+        ));
+
+        if ($tokens === []) {
             return 0;
         }
 
-        $tokens = (new DeviceTokenRepository())->tokensForAuthUid($authUid, 'professional');
         $category = (string) ($booking['category_code'] ?? 'service');
         $bookingId = (string) ($booking['id'] ?? '');
 

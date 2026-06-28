@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS push_device_tokens (
     device_label VARCHAR(120) NULL,
     updated_at DATETIME NOT NULL,
     created_at DATETIME NOT NULL,
-    UNIQUE KEY uq_fcm_token (fcm_token),
+    UNIQUE KEY uq_fcm_role (fcm_token, role),
     INDEX idx_auth_uid (auth_uid),
     INDEX idx_phone (phone_e164),
     INDEX idx_role (role)

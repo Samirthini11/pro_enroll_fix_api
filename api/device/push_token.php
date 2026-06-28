@@ -6,6 +6,7 @@ namespace ProEnroll\Api\Endpoints\Device;
 
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
+use ProEnroll\Api\Config;
 use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\Services\DeviceTokenRepository;
 
@@ -52,14 +53,23 @@ final class PushTokenEndpoint
 
         $deviceLabel = (string) $request->input('device_label', 'ProConnect App');
 
-        (new DeviceTokenRepository())->upsert(
-            $authUid,
-            $phone,
-            $token,
-            $platform,
-            $role,
-            $deviceLabel !== '' ? $deviceLabel : null,
-        );
+        try {
+            (new DeviceTokenRepository())->upsert(
+                $authUid,
+                $phone,
+                $token,
+                $platform,
+                $role,
+                $deviceLabel !== '' ? $deviceLabel : null,
+            );
+        } catch (\Throwable $e) {
+            Response::fail(
+                Config::bool('APP_DEBUG') ? $e->getMessage() : 'Could not save push token',
+                503,
+                'push_token_store_failed',
+            );
+            return;
+        }
 
         Response::ok(['registered' => true]);
     }

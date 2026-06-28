@@ -13,7 +13,8 @@
     "classmap": [
       "api/auth/",
       "api/screens/",
-      "api/customer/"
+      "api/customer/",
+      "api/device/"
     ]
   }
 }
