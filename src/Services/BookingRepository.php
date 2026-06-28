@@ -57,9 +57,11 @@ final class BookingRepository
         $stmt = $this->db->prepare(
             'SELECT b.*, p.full_name AS pro_name, p.phone_e164 AS pro_phone,
                     p.rating_avg AS pro_rating_avg, p.rating_count AS pro_rating_count,
-                    p.kyc_status AS pro_kyc_status
+                    p.kyc_status AS pro_kyc_status,
+                    c.full_name AS customer_name, c.phone_e164 AS customer_phone
              FROM service_bookings b
              INNER JOIN professionals p ON p.id = b.professional_id
+             INNER JOIN customers c ON c.id = b.customer_id
              WHERE b.id = ? LIMIT 1'
         );
         $stmt->execute([$id]);

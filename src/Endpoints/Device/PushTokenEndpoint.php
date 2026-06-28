@@ -11,6 +11,7 @@ use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\Services\CustomerRepository;
 use ProEnroll\Api\Services\DeviceTokenRepository;
 use ProEnroll\Api\Services\ProRepository;
+use ProEnroll\Api\Services\PushNotificationService;
 
 /**
  * POST /v1/device/push-token
@@ -78,15 +79,21 @@ final class PushTokenEndpoint
             return;
         }
 
-        Response::ok(['registered' => true, 'role' => $role, 'auth_uid' => $authUid]);
+        Response::ok([
+            'registered' => true,
+            'role' => $role,
+            'auth_uid' => $authUid,
+            'fcm_configured' => (new PushNotificationService())->isConfigured(),
+        ]);
     }
 
     private function resolveAuthUid(string $phone, string $role, string $jwtSub): string
     {
         if ($role === 'customer') {
-            $customer = (new CustomerRepository())->findByPhone($phone);
-            if ($customer !== null) {
-                return (string) $customer['auth_uid'];
+            $customer = (new CustomerRepository())->upsertFromPhone($phone);
+            $authUid = (string) ($customer['auth_uid'] ?? '');
+            if ($authUid !== '') {
+                return $authUid;
             }
         } else {
             $pro = (new ProRepository())->findByPhone($phone);

@@ -11,12 +11,18 @@ final class BookingPushNotifier
 {
     public static function newBookingForPro(array $pro, array $booking): void
     {
-        self::safe(static fn () => (new PushNotificationService())->notifyProfessionalNewBooking($pro, $booking));
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyProfessionalNewBooking($pro, $booking),
+            'new_booking_pro',
+        );
     }
 
     public static function acceptedForCustomer(array $booking, ?array $pro = null): void
     {
-        self::safe(static fn () => (new PushNotificationService())->notifyCustomerBookingAccepted($booking, $pro));
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyCustomerBookingAccepted($booking, $pro),
+            'booking_accepted_customer',
+        );
     }
 
     public static function rejectedForCustomer(array $booking, ?array $pro = null): void
@@ -40,12 +46,20 @@ final class BookingPushNotifier
     }
 
     /** @param callable(): int $fn */
-    private static function safe(callable $fn): void
+    private static function safe(callable $fn, string $label = 'push'): void
     {
         try {
-            $fn();
+            $sent = $fn();
+            if ($sent === 0) {
+                $push = new PushNotificationService();
+                error_log(sprintf(
+                    'Booking push %s: 0 messages sent (fcm_configured=%s)',
+                    $label,
+                    $push->isConfigured() ? 'yes' : 'no',
+                ));
+            }
         } catch (\Throwable $e) {
-            error_log('Booking push failed: ' . $e->getMessage());
+            error_log('Booking push failed (' . $label . '): ' . $e->getMessage());
         }
     }
 }

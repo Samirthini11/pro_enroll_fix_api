@@ -242,12 +242,21 @@ final class PushNotificationService
             }
         }
 
-        $phone = trim((string) ($booking['customer_phone'] ?? ''));
-        if ($phone !== '') {
+        foreach ($this->customerPhoneCandidates($booking) as $phone) {
             $tokens = array_merge($tokens, $repo->tokensForPhone($phone, 'customer'));
         }
 
-        return array_values(array_unique(array_filter($tokens)));
+        $unique = array_values(array_unique(array_filter($tokens)));
+        if ($unique === []) {
+            error_log(sprintf(
+                'Customer push: no tokens (booking_id=%s customer_id=%s phones=%s)',
+                (string) ($booking['id'] ?? ''),
+                (string) ($booking['customer_id'] ?? ''),
+                implode(',', $this->customerPhoneCandidates($booking)),
+            ));
+        }
+
+        return $unique;
     }
 
     /** @param array<string, mixed> $customer */
@@ -261,6 +270,33 @@ final class PushNotificationService
             $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'customer') : [],
             $phone !== '' ? $repo->tokensForPhone($phone, 'customer') : [],
         )));
+    }
+
+    /** @param array<string, mixed> $booking
+     * @return list<string>
+     */
+    private function customerPhoneCandidates(array $booking): array
+    {
+        $phones = [];
+        foreach (['customer_phone', 'customer_phone_e164'] as $key) {
+            $value = trim((string) ($booking[$key] ?? ''));
+            if ($value !== '') {
+                $phones[] = $value;
+            }
+        }
+
+        $customerId = (int) ($booking['customer_id'] ?? 0);
+        if ($customerId >= 1) {
+            $customer = (new CustomerRepository())->findById($customerId);
+            if ($customer !== null) {
+                $phone = trim((string) ($customer['phone_e164'] ?? ''));
+                if ($phone !== '') {
+                    $phones[] = $phone;
+                }
+            }
+        }
+
+        return array_values(array_unique($phones));
     }
 
     /** @param array<string, mixed> $booking */
