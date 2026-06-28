@@ -16,6 +16,7 @@ use ProEnroll\Api\Http\Request;
 
 use ProEnroll\Api\Http\Response;
 
+use ProEnroll\Api\Services\BookingPushNotifier;
 use ProEnroll\Api\Services\BookingRepository;
 
 
@@ -122,6 +123,10 @@ final class JobActiveScreen extends ScreenHandler
 
             $row = $bookings->findActiveForProfessional($proId, $bookingId);
 
+            if ($row !== null) {
+                BookingPushNotifier::statusForCustomer($row, $status, $pro);
+            }
+
             Response::ok([
 
                 'screen' => 'job_active',
@@ -164,7 +169,10 @@ final class JobActiveScreen extends ScreenHandler
 
             }
 
-
+            $completed = $bookings->findById($bookingId);
+            if ($completed !== null) {
+                BookingPushNotifier::completedForCustomer($completed, $pro, $amount);
+            }
 
             Response::ok([
 

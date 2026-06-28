@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api\Endpoints\Device;
 
+use ProEnroll\Api\Config;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
-use ProEnroll\Api\Config;
 use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\Services\DeviceTokenRepository;
 
@@ -71,6 +71,6 @@ final class PushTokenEndpoint
             return;
         }
 
-        Response::ok(['registered' => true]);
+        Response::ok(['registered' => true, 'role' => $role]);
     }
 }

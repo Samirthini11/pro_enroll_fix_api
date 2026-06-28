@@ -16,6 +16,7 @@ use ProEnroll\Api\Http\Request;
 
 use ProEnroll\Api\Http\Response;
 
+use ProEnroll\Api\Services\BookingPushNotifier;
 use ProEnroll\Api\Services\BookingRepository;
 
 
@@ -136,7 +137,7 @@ final class JobOfferScreen extends ScreenHandler
 
             $active['status'] = 'accepted';
 
-
+            BookingPushNotifier::acceptedForCustomer($activeRow, $pro);
 
             Response::ok([
 
@@ -158,6 +159,7 @@ final class JobOfferScreen extends ScreenHandler
 
         if ($request->method === 'POST' && str_ends_with($request->path, '/reject')) {
 
+            $offerRow = $bookings->findOfferForProfessional($bookingId, $proId);
             if (!$bookings->rejectOffer($bookingId, $proId)) {
 
                 Response::fail('Offer not found or already handled', 404);
@@ -166,7 +168,9 @@ final class JobOfferScreen extends ScreenHandler
 
             }
 
-
+            if ($offerRow !== null) {
+                BookingPushNotifier::rejectedForCustomer($offerRow, $pro);
+            }
 
             Response::ok(['screen' => 'job_offer', 'rejected' => true]);
 

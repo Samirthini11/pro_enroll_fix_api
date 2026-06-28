@@ -8,7 +8,6 @@ use Kreait\Firebase\Factory;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
 use ProEnroll\Api\Auth\FirebaseAuth;
-use ProEnroll\Api\Config;
 
 final class PushNotificationService
 {
@@ -28,6 +27,9 @@ final class PushNotificationService
     ): int {
         $tokens = array_values(array_unique(array_filter($tokens)));
         if ($tokens === [] || !$this->isConfigured()) {
+            if ($tokens !== [] && !$this->isConfigured()) {
+                error_log('FCM skipped: firebase-service-account.json not configured on server');
+            }
             return 0;
         }
 
@@ -35,6 +37,8 @@ final class PushNotificationService
         foreach ($data as $key => $value) {
             $payload[(string) $key] = (string) $value;
         }
+        $payload['title'] = $title;
+        $payload['body'] = $body;
 
         $messaging = $this->messaging();
         $sent = 0;
@@ -47,7 +51,7 @@ final class PushNotificationService
                 $messaging->send($message);
                 $sent++;
             } catch (\Throwable $e) {
-                error_log('FCM send failed for token: ' . $e->getMessage());
+                error_log('FCM send failed: ' . $e->getMessage());
             }
         }
 
@@ -56,32 +60,205 @@ final class PushNotificationService
 
     public function notifyProfessionalNewBooking(array $pro, array $booking): int
     {
-        $repo = new DeviceTokenRepository();
-        $authUid = (string) ($pro['firebase_uid'] ?? '');
-        $phone = (string) ($pro['phone_e164'] ?? '');
-
-        $tokens = array_unique(array_merge(
-            $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'professional') : [],
-            $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
-        ));
-
+        $tokens = $this->professionalTokens($pro);
         if ($tokens === []) {
             return 0;
         }
 
-        $category = (string) ($booking['category_code'] ?? 'service');
+        $category = strtoupper((string) ($booking['category_code'] ?? 'service'));
         $bookingId = (string) ($booking['id'] ?? '');
 
         return $this->sendToTokens(
             $tokens,
             'New job request',
-            'A customer booked you for ' . strtoupper($category) . '. Open the app to accept.',
+            "A customer booked you for {$category}. Tap to accept or reject.",
             [
                 'type' => 'job_offer',
                 'booking_id' => $bookingId,
                 'route' => '/job/offer',
             ],
         );
+    }
+
+    public function notifyCustomerBookingConfirmed(array $booking, ?array $pro = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'Your pro'));
+        $code = (string) ($booking['booking_code'] ?? '');
+        $bookingId = (string) ($booking['id'] ?? '');
+
+        return $this->sendToTokens(
+            $tokens,
+            'Booking confirmed',
+            "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '.',
+            [
+                'type' => 'booking_confirmed',
+                'booking_id' => $bookingId,
+                'route' => '/customer/booking',
+            ],
+        );
+    }
+
+    public function notifyCustomerBookingAccepted(array $booking, ?array $pro = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'Your pro')) ?: 'Your pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+
+        return $this->sendToTokens(
+            $tokens,
+            'Booking accepted',
+            "{$proName} accepted your job and is on the way.",
+            [
+                'type' => 'booking_accepted',
+                'booking_id' => $bookingId,
+                'route' => '/customer/booking',
+            ],
+        );
+    }
+
+    public function notifyCustomerBookingRejected(array $booking, ?array $pro = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'The pro')) ?: 'The pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+
+        return $this->sendToTokens(
+            $tokens,
+            'Booking declined',
+            "{$proName} is unavailable for this booking. Try another pro nearby.",
+            [
+                'type' => 'booking_rejected',
+                'booking_id' => $bookingId,
+                'route' => '/customer/bookings',
+            ],
+        );
+    }
+
+    public function notifyCustomerJobStatus(array $booking, string $apiStatus, ?array $pro = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'Your pro')) ?: 'Your pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+
+        [$title, $body] = match ($apiStatus) {
+            'on_the_way' => ['Pro on the way', "{$proName} is heading to your location."],
+            'in_progress' => ['Work started', "{$proName} has started working on your job."],
+            'completed' => ['Job update', "{$proName} marked the job as done."],
+            default => ['Booking update', "Your booking status changed to {$apiStatus}."],
+        };
+
+        return $this->sendToTokens(
+            $tokens,
+            $title,
+            $body,
+            [
+                'type' => 'booking_status',
+                'booking_id' => $bookingId,
+                'status' => $apiStatus,
+                'route' => '/customer/booking',
+            ],
+        );
+    }
+
+    public function notifyCustomerBookingCompleted(array $booking, ?array $pro = null, ?int $finalAmountPaise = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'Your pro')) ?: 'Your pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+        $amount = $finalAmountPaise ?? (isset($booking['final_amount_paise']) ? (int) $booking['final_amount_paise'] : null);
+        $amountText = $amount !== null && $amount >= 100
+            ? ' Amount: ₹' . number_format($amount / 100, 0)
+            : '';
+
+        return $this->sendToTokens(
+            $tokens,
+            'Job completed',
+            "{$proName} completed your service.{$amountText}",
+            [
+                'type' => 'booking_completed',
+                'booking_id' => $bookingId,
+                'route' => '/customer/booking',
+            ],
+        );
+    }
+
+    /** @param array<string, mixed> $pro */
+    private function professionalTokens(array $pro): array
+    {
+        $repo = new DeviceTokenRepository();
+        $authUid = (string) ($pro['firebase_uid'] ?? '');
+        $phone = (string) ($pro['phone_e164'] ?? '');
+
+        return array_values(array_unique(array_merge(
+            $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'professional') : [],
+            $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
+        )));
+    }
+
+    /** @param array<string, mixed> $booking */
+    private function customerTokensForBooking(array $booking): array
+    {
+        $customerId = (int) ($booking['customer_id'] ?? 0);
+        if ($customerId < 1) {
+            return [];
+        }
+
+        $customer = (new CustomerRepository())->findById($customerId);
+        if ($customer === null) {
+            return [];
+        }
+
+        return $this->customerTokens($customer);
+    }
+
+    /** @param array<string, mixed> $customer */
+    private function customerTokens(array $customer): array
+    {
+        $repo = new DeviceTokenRepository();
+        $authUid = (string) ($customer['auth_uid'] ?? '');
+        $phone = (string) ($customer['phone_e164'] ?? '');
+
+        return array_values(array_unique(array_merge(
+            $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'customer') : [],
+            $phone !== '' ? $repo->tokensForPhone($phone, 'customer') : [],
+        )));
+    }
+
+    /** @param array<string, mixed> $booking */
+    private function proForBooking(array $booking): ?array
+    {
+        $proId = (int) ($booking['professional_id'] ?? 0);
+        if ($proId < 1) {
+            return null;
+        }
+
+        return (new ProRepository())->findById($proId);
     }
 
     private function messaging(): \Kreait\Firebase\Contract\Messaging
@@ -98,7 +275,7 @@ final class PushNotificationService
 
     private function credentialsPath(): ?string
     {
-        $configured = Config::get('FIREBASE_CREDENTIALS');
+        $configured = \ProEnroll\Api\Config::get('FIREBASE_CREDENTIALS');
         if ($configured !== null && $configured !== '') {
             if (is_readable($configured)) {
                 return $configured;

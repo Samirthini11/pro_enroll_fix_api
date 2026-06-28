@@ -8,6 +8,7 @@ use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\Services\AuthService;
+use ProEnroll\Api\Services\BookingPushNotifier;
 use ProEnroll\Api\Services\BookingRepository;
 
 /**
@@ -34,11 +35,15 @@ final class BookingDetailEndpoint
         $path = $request->path;
 
         if (str_ends_with($path, '/complete') && $request->method === 'POST') {
+            $before = $bookings->findByIdForCustomer($bookingId, $customerId);
             if (!$bookings->markCompleted($bookingId, $customerId)) {
                 Response::fail('Cannot mark completed', 400, 'invalid_state');
                 return;
             }
             $row = $bookings->findByIdForCustomer($bookingId, $customerId);
+            if ($before !== null && $row !== null) {
+                BookingPushNotifier::completedForCustomer($row);
+            }
             Response::ok(['booking' => $bookings->bookingPayload($row ?? [])]);
             return;
         }

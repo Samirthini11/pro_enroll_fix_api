@@ -9,9 +9,9 @@ use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\Services\AuthService;
+use ProEnroll\Api\Services\BookingPushNotifier;
 use ProEnroll\Api\Services\BookingRepository;
 use ProEnroll\Api\Services\ProRepository;
-use ProEnroll\Api\Services\PushNotificationService;
 
 /**
  * GET  /v1/customer/bookings
@@ -99,13 +99,8 @@ final class BookingsEndpoint
                 'scheduled_at' => date('Y-m-d H:i:s', $scheduledTs),
             ]);
 
-            try {
-                (new PushNotificationService())->notifyProfessionalNewBooking($pro, $row);
-            } catch (\Throwable $pushErr) {
-                if (Config::bool('APP_DEBUG')) {
-                    error_log('Booking push failed: ' . $pushErr->getMessage());
-                }
-            }
+            BookingPushNotifier::newBookingForPro($pro, $row);
+            BookingPushNotifier::confirmedForCustomer($row, $pro);
 
             Response::ok(['booking' => $bookings->bookingPayload($row)], 201);
         } catch (\Throwable $e) {
