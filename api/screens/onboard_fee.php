@@ -36,8 +36,8 @@ final class OnboardFeeScreen extends ScreenHandler
         }
 
         $fee = (int) $request->input('visit_fee_paise', 0);
-        if ($fee < 100) {
-            Response::fail('visit_fee_paise required (min 100 paise)', 422);
+        if ($fee < 100 || $fee > 100000) {
+            Response::fail('visit_fee_paise must be between 100 and 100000 (₹1–₹1000)', 422);
             return;
         }
 
