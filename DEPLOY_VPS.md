@@ -155,4 +155,4 @@ Live base URL: `http://98.93.105.128/pro_enroll_api`
 | 500 JSON `Class …Endpoint not found` | Run `composer dump-autoload -o` after upload (`api/*` uses classmap in `composer.json`) |
 | OTP verify: `JWT_SECRET is not configured` | Add `JWT_SECRET` to server `.env` — run `openssl rand -hex 32` or `sudo bash deploy/ubuntu-setup.sh` |
 | 500 on `/v1/auth/otp/send` | Use **POST** + JSON body; deploy latest code; `composer install` on server |
-| All APIs broken | Upload latest code; run `sudo bash deploy/ubuntu-setup.sh`; fix broken `public/index.php` if it contains debug `echo` |
+| 500 on admin login (`server_error`) | Upload `src/Endpoints/Auth/AdminLoginEndpoint.php`, `src/Endpoints/Admin/*`, `src/Services/Admin*.php`, `src/Middleware/AdminMiddleware.php`; run `composer dump-autoload -o`; add `ADMIN_*` to server `.env` |
