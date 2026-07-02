@@ -27,11 +27,21 @@ final class KycSelfieScreen extends ScreenHandler
 
         $this->ensurePro($request);
         $score = 0.85 + (mt_rand() / mt_getrandmax()) * 0.14;
-        $this->pros->updateProfile($this->uid($request), ['kyc_status' => 'in_review']);
+        $rounded = round($score, 3);
+        $uid = $this->uid($request);
+        try {
+            $this->pros->updateProfile($uid, [
+                'kyc_status' => 'in_review',
+                'face_match_score' => $rounded,
+            ]);
+        } catch (\Throwable) {
+            // Backward compatible when migration 011 not applied yet.
+            $this->pros->updateProfile($uid, ['kyc_status' => 'in_review']);
+        }
 
         Response::ok([
             'screen' => 'kyc_selfie',
-            'face_match_score' => round($score, 3),
+            'face_match_score' => $rounded,
             'passed' => $score >= 0.8,
             'next_route' => '/kyc/docs',
         ]);

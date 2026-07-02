@@ -91,9 +91,10 @@ final class ProRepository
     public function updateProfile(string $uid, array $fields): array
     {
         $allowed = [
-            'full_name', 'city_id', 'home_lat', 'home_lng',
+            'full_name', 'display_name', 'city_id', 'home_lat', 'home_lng',
             'work_radius_km', 'visit_fee_paise',
-            'is_available', 'kyc_status', 'aadhaar_last4', 'upi_id',
+            'is_available', 'kyc_status', 'kyc_rejected_reason',
+            'aadhaar_last4', 'face_match_score', 'upi_id',
             'bank_account_no', 'bank_ifsc', 'language_code',
         ];
         $sets = [];

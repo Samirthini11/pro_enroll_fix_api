@@ -26,6 +26,19 @@ final class KycDocsScreen extends ScreenHandler
         }
 
         $this->ensurePro($request);
+        $pro = $this->proRow($request);
+        $documents = $request->input('documents', []);
+        if (is_array($documents) && $pro !== null) {
+            try {
+                (new \ProEnroll\Api\Services\AdminRepository())->seedDocumentsFromKycUpload(
+                    (int) $pro['id'],
+                    array_map('strval', $documents),
+                );
+            } catch (\Throwable) {
+                // Optional admin tables — pro_enroll_v1 flow still succeeds.
+            }
+        }
+
         Response::ok([
             'screen' => 'kyc_docs',
             'uploaded' => true,

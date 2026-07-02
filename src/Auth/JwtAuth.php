@@ -54,6 +54,9 @@ final class JwtAuth
         return [
             'sub' => (string) $payload['sub'],
             'phone' => isset($payload['phone']) ? (string) $payload['phone'] : null,
+            'email' => isset($payload['email']) ? (string) $payload['email'] : null,
+            'role' => isset($payload['role']) ? (string) $payload['role'] : null,
+            'admin_role' => isset($payload['admin_role']) ? (string) $payload['admin_role'] : null,
             'jti' => isset($payload['jti']) ? (string) $payload['jti'] : null,
             'iat' => (int) ($payload['iat'] ?? 0),
             'exp' => (int) $payload['exp'],

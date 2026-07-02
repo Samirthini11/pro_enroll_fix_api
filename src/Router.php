@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api;
 
+use ProEnroll\Api\Endpoints\Admin\AdminDashboardEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminDocumentsEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminKycEndpoint;
+use ProEnroll\Api\Endpoints\Auth\AdminLoginEndpoint;
 use ProEnroll\Api\Endpoints\Auth\FirebaseSessionEndpoint;
 use ProEnroll\Api\Endpoints\Auth\LogoutEndpoint;
 use ProEnroll\Api\Endpoints\Auth\MeEndpoint;
@@ -48,6 +52,7 @@ final class Router
 {
     /** @var array<string, class-string> */
     private const ROUTES = [
+        'POST /v1/auth/admin/login' => AdminLoginEndpoint::class,
         'POST /v1/auth/otp/send' => OtpSendEndpoint::class,
         'POST /v1/auth/otp/verify' => OtpVerifyEndpoint::class,
         'POST /v1/auth/firebase/session' => FirebaseSessionEndpoint::class,
@@ -94,6 +99,9 @@ final class Router
         'POST /v1/customer/bookings' => BookingsEndpoint::class,
         'GET /v1/customer/profile' => ProfileEndpoint::class,
         'PUT /v1/customer/profile' => ProfileEndpoint::class,
+        'GET /v1/admin/dashboard' => AdminDashboardEndpoint::class,
+        'GET /v1/admin/kyc' => AdminKycEndpoint::class,
+        'GET /v1/admin/documents' => AdminDocumentsEndpoint::class,
     ];
 
     public static function dispatch(Request $request): void
@@ -143,6 +151,21 @@ final class Router
 
         if ($request->method === 'POST' && $request->path === '/v1/customer/profile/photo') {
             (new ProfileEndpoint())->handle($request);
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/kyc/(\d+)$#', $key, $m)) {
+            (new AdminKycEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
+        if (preg_match('#^POST /v1/admin/kyc/(\d+)/(approve|reject)$#', $key, $m)) {
+            (new AdminKycEndpoint())->handle($request, (int) $m[1], $m[2]);
+            return;
+        }
+
+        if (preg_match('#^POST /v1/admin/documents/(\d+)/(approve|reject)$#', $key, $m)) {
+            (new AdminDocumentsEndpoint())->handle($request, (int) $m[1], $m[2]);
             return;
         }
 
