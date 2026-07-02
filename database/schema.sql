@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS professionals (
 
     full_name VARCHAR(120) NULL,
 
+    display_name VARCHAR(120) NULL,
+
     city_id INT UNSIGNED NULL,
 
     home_lat DECIMAL(9,6) NULL,
@@ -37,6 +39,10 @@ CREATE TABLE IF NOT EXISTS professionals (
     ) NOT NULL DEFAULT 'not_started',
 
     aadhaar_last4 CHAR(4) NULL,
+
+    face_match_score DECIMAL(4,3) NULL,
+
+    kyc_rejected_reason VARCHAR(500) NULL,
 
     upi_id VARCHAR(100) NULL,
 
@@ -62,6 +68,22 @@ CREATE TABLE IF NOT EXISTS professionals (
 
     INDEX idx_kyc (kyc_status)
 
+) ENGINE=InnoDB;
+
+
+
+CREATE TABLE IF NOT EXISTS pro_documents (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    professional_id BIGINT UNSIGNED NOT NULL,
+    kind ENUM('aadhaar', 'pan', 'selfie', 'shop_photo', 'cert', 'other') NOT NULL,
+    label VARCHAR(120) NOT NULL,
+    status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+    thumbnail_url VARCHAR(512) NULL,
+    rejected_reason VARCHAR(500) NULL,
+    uploaded_at DATETIME NOT NULL,
+    reviewed_at DATETIME NULL,
+    INDEX idx_pro_doc_pro (professional_id),
+    INDEX idx_pro_doc_queue (status, kind)
 ) ENGINE=InnoDB;
 
 

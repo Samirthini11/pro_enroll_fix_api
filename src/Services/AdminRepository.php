@@ -15,6 +15,11 @@ final class AdminRepository
 {
     private PDO $db;
 
+    /** @var array<string, bool> */
+    private array $columnCache = [];
+
+    private ?bool $hasProDocuments = null;
+
     public function __construct()
     {
         $this->db = Database::connection();
@@ -27,10 +32,13 @@ final class AdminRepository
             "SELECT COUNT(*) FROM professionals WHERE kyc_status = 'in_review'"
         )->fetchColumn();
 
-        $docsPending = (int) $this->db->query(
-            "SELECT COUNT(*) FROM pro_documents
-             WHERE status = 'pending' AND kind IN ('shop_photo', 'cert')"
-        )->fetchColumn();
+        $docsPending = 0;
+        if ($this->hasProDocumentsTable()) {
+            $docsPending = (int) $this->db->query(
+                "SELECT COUNT(*) FROM pro_documents
+                 WHERE status = 'pending' AND kind IN ('shop_photo', 'cert')"
+            )->fetchColumn();
+        }
 
         $approvedToday = (int) $this->db->query(
             "SELECT COUNT(*) FROM professionals
@@ -95,11 +103,19 @@ final class AdminRepository
 
     public function approveKyc(int $proId): bool
     {
-        $stmt = $this->db->prepare(
-            "UPDATE professionals
-             SET kyc_status = 'verified', kyc_rejected_reason = NULL, updated_at = NOW()
-             WHERE id = ? AND kyc_status = 'in_review'"
-        );
+        if ($this->hasColumn('professionals', 'kyc_rejected_reason')) {
+            $stmt = $this->db->prepare(
+                "UPDATE professionals
+                 SET kyc_status = 'verified', kyc_rejected_reason = NULL, updated_at = NOW()
+                 WHERE id = ? AND kyc_status = 'in_review'"
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE professionals
+                 SET kyc_status = 'verified', updated_at = NOW()
+                 WHERE id = ? AND kyc_status = 'in_review'"
+            );
+        }
         $stmt->execute([$proId]);
 
         return $stmt->rowCount() > 0;
@@ -107,12 +123,21 @@ final class AdminRepository
 
     public function rejectKyc(int $proId, string $reason): bool
     {
-        $stmt = $this->db->prepare(
-            "UPDATE professionals
-             SET kyc_status = 'rejected', kyc_rejected_reason = ?, updated_at = NOW()
-             WHERE id = ? AND kyc_status = 'in_review'"
-        );
-        $stmt->execute([$reason, $proId]);
+        if ($this->hasColumn('professionals', 'kyc_rejected_reason')) {
+            $stmt = $this->db->prepare(
+                "UPDATE professionals
+                 SET kyc_status = 'rejected', kyc_rejected_reason = ?, updated_at = NOW()
+                 WHERE id = ? AND kyc_status = 'in_review'"
+            );
+            $stmt->execute([$reason, $proId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE professionals
+                 SET kyc_status = 'rejected', updated_at = NOW()
+                 WHERE id = ? AND kyc_status = 'in_review'"
+            );
+            $stmt->execute([$proId]);
+        }
 
         return $stmt->rowCount() > 0;
     }
@@ -120,6 +145,9 @@ final class AdminRepository
     /** @return list<array<string, mixed>> */
     public function documentQueue(?string $kind = null, ?string $status = null): array
     {
+        if (!$this->hasProDocumentsTable()) {
+            return [];
+        }
         $sql = 'SELECT d.*, p.full_name, p.display_name, p.city_id
                 FROM pro_documents d
                 INNER JOIN professionals p ON p.id = d.professional_id
@@ -150,6 +178,9 @@ final class AdminRepository
 
     public function approveDocument(int $documentId): bool
     {
+        if (!$this->hasProDocumentsTable()) {
+            return false;
+        }
         $stmt = $this->db->prepare(
             "UPDATE pro_documents
              SET status = 'approved', rejected_reason = NULL, reviewed_at = NOW()
@@ -162,6 +193,9 @@ final class AdminRepository
 
     public function rejectDocument(int $documentId, string $reason): bool
     {
+        if (!$this->hasProDocumentsTable()) {
+            return false;
+        }
         $stmt = $this->db->prepare(
             "UPDATE pro_documents
              SET status = 'rejected', rejected_reason = ?, reviewed_at = NOW()
@@ -175,6 +209,9 @@ final class AdminRepository
     /** @param list<string> $documentTypes */
     public function seedDocumentsFromKycUpload(int $professionalId, array $documentTypes): void
     {
+        if (!$this->hasProDocumentsTable()) {
+            return;
+        }
         $map = [
             'shop' => ['kind' => 'shop_photo', 'label' => 'Shop / workshop photo'],
             'shop_photo' => ['kind' => 'shop_photo', 'label' => 'Shop / workshop photo'],
@@ -194,6 +231,9 @@ final class AdminRepository
 
     public function ensureCoreKycDocuments(int $professionalId): void
     {
+        if (!$this->hasProDocumentsTable()) {
+            return;
+        }
         $pro = (new ProRepository())->findById($professionalId);
         if ($pro === null) {
             return;
@@ -287,6 +327,9 @@ final class AdminRepository
     /** @return list<array<string, mixed>> */
     private function documentsForPro(int $proId): array
     {
+        if (!$this->hasProDocumentsTable()) {
+            return [];
+        }
         $stmt = $this->db->prepare(
             'SELECT * FROM pro_documents WHERE professional_id = ? ORDER BY uploaded_at ASC'
         );
@@ -354,5 +397,38 @@ final class AdminRepository
             'in_review' => 'in_review',
             default => 'in_review',
         };
+    }
+
+    private function hasProDocumentsTable(): bool
+    {
+        if ($this->hasProDocuments !== null) {
+            return $this->hasProDocuments;
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+        );
+        $stmt->execute(['pro_documents']);
+        $this->hasProDocuments = ((int) $stmt->fetchColumn()) > 0;
+
+        return $this->hasProDocuments;
+    }
+
+    private function hasColumn(string $table, string $column): bool
+    {
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $this->columnCache)) {
+            return $this->columnCache[$key];
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $stmt->execute([$table, $column]);
+        $this->columnCache[$key] = ((int) $stmt->fetchColumn()) > 0;
+
+        return $this->columnCache[$key];
     }
 }

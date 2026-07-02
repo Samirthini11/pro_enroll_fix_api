@@ -25,7 +25,15 @@ final class AdminDashboardEndpoint
             return;
         }
 
-        $repo = new AdminRepository();
-        Response::ok($repo->dashboardStats());
+        try {
+            $repo = new AdminRepository();
+            Response::ok($repo->dashboardStats());
+        } catch (\Throwable $e) {
+            Response::fail(
+                'Dashboard unavailable: ' . $e->getMessage(),
+                500,
+                'admin_dashboard_failed',
+            );
+        }
     }
 }

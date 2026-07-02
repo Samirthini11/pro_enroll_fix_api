@@ -23,45 +23,54 @@ final class AdminKycEndpoint
             return;
         }
 
-        $repo = new AdminRepository();
+        try {
+            $repo = new AdminRepository();
 
-        if ($request->method === 'GET' && $proId === null) {
-            $status = (string) ($request->query['status'] ?? '');
-            $status = $status !== '' ? $status : null;
-            Response::ok(['items' => $repo->kycQueue($status)]);
-            return;
-        }
-
-        if ($request->method === 'GET' && $proId !== null) {
-            $detail = $repo->kycDetail($proId);
-            if ($detail === null) {
-                Response::fail('Professional not found', 404, 'not_found');
+            if ($request->method === 'GET' && $proId === null) {
+                $status = (string) ($request->query['status'] ?? '');
+                $status = $status !== '' ? $status : null;
+                Response::ok(['items' => $repo->kycQueue($status)]);
                 return;
             }
-            Response::ok(['item' => $detail]);
-            return;
-        }
 
-        if ($request->method === 'POST' && $proId !== null && $action === 'approve') {
-            if (!$repo->approveKyc($proId)) {
-                Response::fail('Could not approve — not in review queue', 409, 'invalid_state');
+            if ($request->method === 'GET' && $proId !== null) {
+                $detail = $repo->kycDetail($proId);
+                if ($detail === null) {
+                    Response::fail('Professional not found', 404, 'not_found');
+                    return;
+                }
+                Response::ok(['item' => $detail]);
                 return;
             }
-            Response::ok(['pro_id' => $proId, 'status' => 'verified']);
-            return;
-        }
 
-        if ($request->method === 'POST' && $proId !== null && $action === 'reject') {
-            $reason = trim((string) $request->input('reason', ''));
-            if ($reason === '') {
-                Response::fail('reason is required', 422, 'validation');
+            if ($request->method === 'POST' && $proId !== null && $action === 'approve') {
+                if (!$repo->approveKyc($proId)) {
+                    Response::fail('Could not approve — not in review queue', 409, 'invalid_state');
+                    return;
+                }
+                Response::ok(['pro_id' => $proId, 'status' => 'verified']);
                 return;
             }
-            if (!$repo->rejectKyc($proId, $reason)) {
-                Response::fail('Could not reject — not in review queue', 409, 'invalid_state');
+
+            if ($request->method === 'POST' && $proId !== null && $action === 'reject') {
+                $reason = trim((string) $request->input('reason', ''));
+                if ($reason === '') {
+                    Response::fail('reason is required', 422, 'validation');
+                    return;
+                }
+                if (!$repo->rejectKyc($proId, $reason)) {
+                    Response::fail('Could not reject — not in review queue', 409, 'invalid_state');
+                    return;
+                }
+                Response::ok(['pro_id' => $proId, 'status' => 'rejected', 'reason' => $reason]);
                 return;
             }
-            Response::ok(['pro_id' => $proId, 'status' => 'rejected', 'reason' => $reason]);
+        } catch (\Throwable $e) {
+            Response::fail(
+                'KYC request failed: ' . $e->getMessage(),
+                500,
+                'admin_kyc_failed',
+            );
             return;
         }
 
