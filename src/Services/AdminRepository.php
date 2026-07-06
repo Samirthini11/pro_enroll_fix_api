@@ -20,6 +20,8 @@ final class AdminRepository
 
     private ?bool $hasProDocuments = null;
 
+    private ?bool $hasCustomers = null;
+
     public function __construct()
     {
         $this->db = Database::connection();
@@ -54,12 +56,25 @@ final class AdminRepository
             "SELECT COUNT(*) FROM professionals WHERE kyc_status = 'verified'"
         )->fetchColumn();
 
+        $totalRegisteredPros = (int) $this->db->query(
+            "SELECT COUNT(*) FROM professionals WHERE phone_e164 IS NOT NULL"
+        )->fetchColumn();
+
+        $totalRegisteredCustomers = 0;
+        if ($this->hasCustomersTable()) {
+            $totalRegisteredCustomers = (int) $this->db->query(
+                'SELECT COUNT(*) FROM customers'
+            )->fetchColumn();
+        }
+
         return [
             'kyc_pending' => $kycPending,
             'docs_pending' => $docsPending,
             'approved_today' => $approvedToday,
             'rejected_today' => $rejectedToday,
             'total_verified_pros' => $totalVerified,
+            'total_registered_pros' => $totalRegisteredPros,
+            'total_registered_customers' => $totalRegisteredCustomers,
         ];
     }
 
@@ -413,6 +428,22 @@ final class AdminRepository
         $this->hasProDocuments = ((int) $stmt->fetchColumn()) > 0;
 
         return $this->hasProDocuments;
+    }
+
+    private function hasCustomersTable(): bool
+    {
+        if ($this->hasCustomers !== null) {
+            return $this->hasCustomers;
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+        );
+        $stmt->execute(['customers']);
+        $this->hasCustomers = ((int) $stmt->fetchColumn()) > 0;
+
+        return $this->hasCustomers;
     }
 
     private function hasColumn(string $table, string $column): bool
