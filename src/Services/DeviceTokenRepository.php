@@ -107,6 +107,16 @@ final class DeviceTokenRepository
         return $this->extractTokens($stmt->fetchAll() ?: []);
     }
 
+    public function deleteByToken(string $fcmToken): void
+    {
+        if (!$this->tableExists() || trim($fcmToken) === '') {
+            return;
+        }
+
+        $stmt = $this->db->prepare('DELETE FROM push_device_tokens WHERE fcm_token = ?');
+        $stmt->execute([$fcmToken]);
+    }
+
     /** @return list<array{role: string, phone_e164: string, fcm_token: string}> */
     public function listRecentTokens(int $limit = 10): array
     {

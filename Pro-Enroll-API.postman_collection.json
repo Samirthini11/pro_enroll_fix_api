@@ -158,6 +158,40 @@
         {
           "name": "Test Connection",
           "request": { "method": "GET", "url": "{{base_url}}/test_connection.php" }
+        },
+        {
+          "name": "Push Health",
+          "request": { "method": "GET", "url": "{{base_url}}/v1/health/push" }
+        }
+      ]
+    },
+    {
+      "name": "Push Notifications (Bearer)",
+      "description": "1. Login (Get Token). 2. Register FCM token from Flutter. 3. Send test push.",
+      "item": [
+        {
+          "name": "Register FCM Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcm_token\": \"{{fcm_token}}\",\n  \"platform\": \"android\",\n  \"register_all_roles\": true\n}"
+            },
+            "url": "{{base_url}}/v1/device/push-token"
+          }
+        },
+        {
+          "name": "Send Test Push",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Pro-Enroll test\",\n  \"body\": \"Push via API is working.\"\n}"
+            },
+            "url": "{{base_url}}/v1/device/push-test"
+          }
         }
       ]
     },

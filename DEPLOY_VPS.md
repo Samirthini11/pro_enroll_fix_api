@@ -116,7 +116,8 @@ sudo systemctl reload apache2
 |-----|----------|
 | http://98.93.105.128/pro_enroll_api/ping.php | JSON with `"ok": true` |
 | http://98.93.105.128/pro_enroll_api/v1/screens/splash | JSON `"success": true` |
-| http://98.93.105.128/pro_enroll_api/v1/health/push | JSON `"fcm_http_v1_ready": true` (503 until service account JSON is on server) |
+| http://98.93.105.128/pro_enroll_api/v1/health/push | JSON `"fcm_http_v1_ready": true` |
+| Push test (after login) | `POST /v1/device/push-test` with Bearer token |
 
 Quick test:
 
@@ -124,6 +125,10 @@ Quick test:
 curl -s http://98.93.105.128/pro_enroll_api/v1/screens/splash
 curl -s http://98.93.105.128/pro_enroll_api/ping.php
 curl -s http://98.93.105.128/pro_enroll_api/v1/health/push
+curl -s -X POST http://98.93.105.128/pro_enroll_api/v1/device/push-test \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Test","body":"Hello"}'
 ```
 
 ## 7. Flutter app (live API)

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api\Services;
 
+use Kreait\Firebase\Exception\Messaging\NotFound as FcmTokenNotFound;
+use Kreait\Firebase\Exception\MessagingException;
 use Kreait\Firebase\Messaging\AndroidConfig;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
@@ -41,6 +43,7 @@ final class PushNotificationService
         $payload['body'] = $body;
 
         $messaging = FirebaseCredentials::messaging();
+        $tokenRepo = new DeviceTokenRepository();
         $sent = 0;
 
         foreach ($tokens as $token) {
@@ -61,11 +64,35 @@ final class PushNotificationService
                 $messaging->send($message);
                 $sent++;
             } catch (\Throwable $e) {
-                error_log('FCM send failed: ' . $e->getMessage());
+                if ($this->isInvalidFcmToken($e)) {
+                    $tokenRepo->deleteByToken($token);
+                    error_log('FCM removed stale token: ' . substr($token, 0, 12) . '…');
+                } else {
+                    error_log('FCM send failed: ' . $e->getMessage());
+                }
             }
         }
 
         return $sent;
+    }
+
+    private function isInvalidFcmToken(\Throwable $e): bool
+    {
+        if ($e instanceof FcmTokenNotFound) {
+            return true;
+        }
+
+        if ($e instanceof MessagingException) {
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, 'not found')
+                || str_contains($message, 'not registered')
+                || str_contains($message, 'invalid registration')
+                || str_contains($message, 'unregistered')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function notifyProfessionalNewBooking(array $pro, array $booking): int

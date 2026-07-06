@@ -78,6 +78,221 @@ final class AdminRepository
         ];
     }
 
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    public function listProfessionals(int $page = 1, int $limit = 20): array
+    {
+        $page = max(1, $page);
+        $limit = max(1, min(50, $limit));
+        $offset = ($page - 1) * $limit;
+
+        $total = (int) $this->db->query(
+            'SELECT COUNT(*) FROM professionals WHERE phone_e164 IS NOT NULL'
+        )->fetchColumn();
+
+        $stmt = $this->db->prepare(
+            'SELECT * FROM professionals
+             WHERE phone_e164 IS NOT NULL
+             ORDER BY created_at DESC
+             LIMIT ? OFFSET ?'
+        );
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $items = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = $this->buildProfessionalListItem($row);
+        }
+
+        return $this->paginatedResponse($items, $total, $page, $limit);
+    }
+
+    /** @return array<string, mixed>|null */
+    public function professionalDetail(int $proId): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT * FROM professionals WHERE id = ? AND phone_e164 IS NOT NULL LIMIT 1'
+        );
+        $stmt->execute([$proId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        $profile = $this->buildProfessionalListItem($row);
+        $stats = $this->bookingStatsForProfessional($proId);
+
+        return [
+            ...$profile,
+            'booking_count' => $stats['booking_count'],
+            'work_complete_count' => $stats['work_complete_count'],
+            'rating_avg' => (float) ($row['rating_avg'] ?? 0),
+            'rating_count' => (int) ($row['rating_count'] ?? 0),
+            'work_radius_km' => (int) ($row['work_radius_km'] ?? 0),
+            'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+        ];
+    }
+
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    public function listProfessionalBookings(
+        int $proId,
+        int $page = 1,
+        int $limit = 20,
+        ?string $statusFilter = null,
+    ): array {
+        return $this->listBookingsForMember('professional_id', $proId, $page, $limit, $statusFilter, 'customer');
+    }
+
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    public function listCustomers(int $page = 1, int $limit = 20): array
+    {
+        $page = max(1, $page);
+        $limit = max(1, min(50, $limit));
+
+        if (!$this->hasCustomersTable()) {
+            return $this->paginatedResponse([], 0, $page, $limit);
+        }
+
+        $offset = ($page - 1) * $limit;
+        $total = (int) $this->db->query('SELECT COUNT(*) FROM customers')->fetchColumn();
+
+        $stmt = $this->db->prepare(
+            'SELECT * FROM customers ORDER BY created_at DESC LIMIT ? OFFSET ?'
+        );
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $items = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = $this->buildCustomerListItem($row);
+        }
+
+        return $this->paginatedResponse($items, $total, $page, $limit);
+    }
+
+    /** @return array<string, mixed>|null */
+    public function customerDetail(int $customerId): ?array
+    {
+        if (!$this->hasCustomersTable()) {
+            return null;
+        }
+
+        $stmt = $this->db->prepare('SELECT * FROM customers WHERE id = ? LIMIT 1');
+        $stmt->execute([$customerId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        $profile = $this->buildCustomerListItem($row);
+        $stats = $this->bookingStatsForCustomer($customerId);
+
+        return [
+            ...$profile,
+            'booking_count' => $stats['booking_count'],
+            'work_complete_count' => $stats['work_complete_count'],
+        ];
+    }
+
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    public function listCustomerBookings(
+        int $customerId,
+        int $page = 1,
+        int $limit = 20,
+        ?string $statusFilter = null,
+    ): array {
+        return $this->listBookingsForMember('customer_id', $customerId, $page, $limit, $statusFilter, 'professional');
+    }
+
+    /** @param array<string, mixed> $pro */
+    private function buildProfessionalListItem(array $pro): array
+    {
+        $proId = (int) $pro['id'];
+        $skills = (new ProRepository())->getSkills($proId);
+        $primary = null;
+        foreach ($skills as $skill) {
+            if ($skill['is_primary']) {
+                $primary = $skill['category_code'];
+                break;
+            }
+        }
+        $primary ??= $skills[0]['category_code'] ?? null;
+
+        $cityName = $this->cityNameForId($pro['city_id'] !== null ? (int) $pro['city_id'] : null);
+
+        $displayName = (string) ($pro['display_name'] ?? '');
+        if ($displayName === '' && !empty($pro['full_name'])) {
+            $displayName = (string) $pro['full_name'];
+        }
+
+        $stats = $this->bookingStatsForProfessional($proId);
+
+        return [
+            'id' => $proId,
+            'full_name' => (string) ($pro['full_name'] ?? ''),
+            'display_name' => $displayName,
+            'phone_e164' => (string) ($pro['phone_e164'] ?? ''),
+            'city' => $cityName,
+            'kyc_status' => (string) ($pro['kyc_status'] ?? 'not_started'),
+            'is_available' => (bool) ($pro['is_available'] ?? false),
+            'registered_at' => (string) ($pro['created_at'] ?? ''),
+            'primary_category' => $primary,
+            'booking_count' => $stats['booking_count'],
+            'work_complete_count' => $stats['work_complete_count'],
+        ];
+    }
+
+    /** @param array<string, mixed> $row */
+    private function buildCustomerListItem(array $row): array
+    {
+        $customerId = (int) $row['id'];
+        $stats = $this->bookingStatsForCustomer($customerId);
+
+        return [
+            'id' => $customerId,
+            'full_name' => (string) ($row['full_name'] ?? ''),
+            'phone_e164' => (string) ($row['phone_e164'] ?? ''),
+            'city' => $this->cityNameForId($row['city_id'] !== null ? (int) $row['city_id'] : null),
+            'registered_at' => (string) ($row['created_at'] ?? ''),
+            'booking_count' => $stats['booking_count'],
+            'work_complete_count' => $stats['work_complete_count'],
+        ];
+    }
+
+  /** @param list<array<string, mixed>> $items */
+    private function paginatedResponse(array $items, int $total, int $page, int $limit): array
+    {
+        $totalPages = $limit > 0 ? (int) ceil($total / $limit) : 0;
+
+        return [
+            'items' => $items,
+            'page' => $page,
+            'limit' => $limit,
+            'total' => $total,
+            'total_pages' => $totalPages,
+            'has_more' => $page < $totalPages,
+        ];
+    }
+
+    private function cityNameForId(?int $cityId): string
+    {
+        if ($cityId === null) {
+            return '—';
+        }
+        $city = ReferenceData::cityById($cityId);
+
+        return $city['name'] ?? '—';
+    }
+
     /** @return list<array<string, mixed>> */
     public function kycQueue(?string $status = null): array
     {
@@ -444,6 +659,188 @@ final class AdminRepository
         $this->hasCustomers = ((int) $stmt->fetchColumn()) > 0;
 
         return $this->hasCustomers;
+    }
+
+    private ?bool $hasBookings = null;
+
+    private function hasBookingsTable(): bool
+    {
+        if ($this->hasBookings !== null) {
+            return $this->hasBookings;
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+        );
+        $stmt->execute(['service_bookings']);
+        $this->hasBookings = ((int) $stmt->fetchColumn()) > 0;
+
+        return $this->hasBookings;
+    }
+
+    /** @return array{booking_count: int, work_complete_count: int} */
+    private function bookingStatsForProfessional(int $proId): array
+    {
+        if (!$this->hasBookingsTable()) {
+            return ['booking_count' => 0, 'work_complete_count' => 0];
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT
+                COUNT(*) AS booking_count,
+                SUM(CASE WHEN status = \'completed\' THEN 1 ELSE 0 END) AS work_complete_count
+             FROM service_bookings
+             WHERE professional_id = ?'
+        );
+        $stmt->execute([$proId]);
+        $row = $stmt->fetch() ?: [];
+
+        return [
+            'booking_count' => (int) ($row['booking_count'] ?? 0),
+            'work_complete_count' => (int) ($row['work_complete_count'] ?? 0),
+        ];
+    }
+
+    /** @return array{booking_count: int, work_complete_count: int} */
+    private function bookingStatsForCustomer(int $customerId): array
+    {
+        if (!$this->hasBookingsTable()) {
+            return ['booking_count' => 0, 'work_complete_count' => 0];
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT
+                COUNT(*) AS booking_count,
+                SUM(CASE WHEN status = \'completed\' THEN 1 ELSE 0 END) AS work_complete_count
+             FROM service_bookings
+             WHERE customer_id = ?'
+        );
+        $stmt->execute([$customerId]);
+        $row = $stmt->fetch() ?: [];
+
+        return [
+            'booking_count' => (int) ($row['booking_count'] ?? 0),
+            'work_complete_count' => (int) ($row['work_complete_count'] ?? 0),
+        ];
+    }
+
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    private function listBookingsForMember(
+        string $memberColumn,
+        int $memberId,
+        int $page,
+        int $limit,
+        ?string $statusFilter,
+        string $counterparty,
+    ): array {
+        $page = max(1, $page);
+        $limit = max(1, min(50, $limit));
+
+        if (!$this->hasBookingsTable()) {
+            return $this->paginatedResponse([], 0, $page, $limit);
+        }
+
+        $allowedColumns = ['professional_id', 'customer_id'];
+        if (!in_array($memberColumn, $allowedColumns, true)) {
+            return $this->paginatedResponse([], 0, $page, $limit);
+        }
+
+        [$statusSql, $statusParams] = $this->bookingStatusFilterSql($statusFilter);
+        $offset = ($page - 1) * $limit;
+
+        $countSql = "SELECT COUNT(*) FROM service_bookings b WHERE b.$memberColumn = ? $statusSql";
+        $countStmt = $this->db->prepare($countSql);
+        $countStmt->execute(array_merge([$memberId], $statusParams));
+        $total = (int) $countStmt->fetchColumn();
+
+        $join = $counterparty === 'customer'
+            ? 'INNER JOIN customers c ON c.id = b.customer_id'
+            : 'INNER JOIN professionals p ON p.id = b.professional_id';
+        $counterpartyName = $counterparty === 'customer'
+            ? 'c.full_name AS counterparty_name'
+            : 'COALESCE(p.display_name, p.full_name) AS counterparty_name';
+
+        $sql = "SELECT b.*, $counterpartyName
+                FROM service_bookings b
+                $join
+                WHERE b.$memberColumn = ? $statusSql
+                ORDER BY b.created_at DESC
+                LIMIT ? OFFSET ?";
+
+        $stmt = $this->db->prepare($sql);
+        $idx = 1;
+        $stmt->bindValue($idx++, $memberId, PDO::PARAM_INT);
+        foreach ($statusParams as $param) {
+            $stmt->bindValue($idx++, $param);
+        }
+        $stmt->bindValue($idx++, $limit, PDO::PARAM_INT);
+        $stmt->bindValue($idx++, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $items = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = $this->buildAdminBookingItem($row, $counterparty);
+        }
+
+        return $this->paginatedResponse($items, $total, $page, $limit);
+    }
+
+    /** @return array{0: string, 1: list<string>} */
+    private function bookingStatusFilterSql(?string $filter): array
+    {
+        $filter = strtolower(trim((string) $filter));
+        if ($filter === '' || $filter === 'all') {
+            return ['', []];
+        }
+
+        return match ($filter) {
+            'completed' => [" AND b.status = 'completed'", []],
+            'cancelled' => [" AND b.status = 'cancelled'", []],
+            'active' => [
+                " AND b.status IN ('pending', 'confirmed', 'en_route', 'arrived', 'in_progress', 'awaiting_payment')",
+                [],
+            ],
+            default => [' AND b.status = ?', [$filter]],
+        };
+    }
+
+    /** @param array<string, mixed> $row */
+    private function buildAdminBookingItem(array $row, string $counterparty): array
+    {
+        $catCode = (string) ($row['category_code'] ?? '');
+
+        return [
+            'id' => (int) $row['id'],
+            'booking_code' => (string) ($row['booking_code'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+            'status_label' => BookingRepository::statusLabel((string) ($row['status'] ?? '')),
+            'category_code' => $catCode,
+            'category_name' => $this->categoryNameForCode($catCode),
+            'counterparty_name' => (string) ($row['counterparty_name'] ?? ''),
+            'counterparty_role' => $counterparty,
+            'scheduled_at' => (string) ($row['scheduled_at'] ?? ''),
+            'completed_at' => $row['completed_at'] ? (string) $row['completed_at'] : null,
+            'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+        ];
+    }
+
+    private function categoryNameForCode(string $code): string
+    {
+        foreach (ReferenceData::categories() as $category) {
+            if (($category['code'] ?? '') === $code) {
+                return (string) ($category['name_en'] ?? $code);
+            }
+        }
+        foreach (ReferenceData::staticCategories() as $category) {
+            if (($category['code'] ?? '') === $code) {
+                return (string) ($category['name_en'] ?? $code);
+            }
+        }
+
+        return $code;
     }
 
     private function hasColumn(string $table, string $column): bool

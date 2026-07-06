@@ -143,6 +143,23 @@ if ($checks['vendor']) {
     require_once $root . '/vendor/autoload.php';
     \ProEnroll\Api\Config::load($root);
 
+    if (class_exists(\ProEnroll\Api\Auth\FirebaseCredentials::class)) {
+        $pushDiag = \ProEnroll\Api\Auth\FirebaseCredentials::diagnostics();
+        $checks['fcm_credentials_found'] = (bool) ($pushDiag['credentials_found'] ?? false);
+        $checks['fcm_http_v1_ready'] = (bool) ($pushDiag['fcm_http_v1_ready'] ?? false);
+        $checks['firebase_project_id'] = $pushDiag['project_id'] ?? null;
+        if (!($checks['fcm_http_v1_ready'] ?? false)) {
+            $checks['fcm_setup_hint'] = \ProEnroll\Api\Auth\FirebaseCredentials::setupHint();
+        }
+    }
+
+    try {
+        $tokenRepo = new \ProEnroll\Api\Services\DeviceTokenRepository();
+        $checks['push_device_tokens'] = count($tokenRepo->listRecentTokens(100));
+    } catch (\Throwable) {
+        $checks['push_device_tokens'] = 0;
+    }
+
     $host = pingDbHost(pingEnv('DB_HOST', '127.0.0.1'));
     $port = pingEnv('DB_PORT', '3306');
     $name = pingEnv('DB_NAME', 'pro_enroll');
@@ -214,6 +231,9 @@ if (!$checks['ok']) {
     }
     if (!($checks['jwt_secret_set'] ?? false)) {
         $checks['fixes'][] = 'Add JWT_SECRET to server .env: openssl rand -hex 32';
+    }
+    if (($checks['fcm_http_v1_ready'] ?? null) === false) {
+        $checks['fixes'][] = 'Upload config/firebase-service-account.json and set FIREBASE_CREDENTIALS in .env for push';
     }
 }
 

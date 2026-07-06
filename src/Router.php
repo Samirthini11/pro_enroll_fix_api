@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api;
 
+use ProEnroll\Api\Endpoints\Admin\AdminCustomersEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDashboardEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDocumentsEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminKycEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminProfessionalsEndpoint;
 use ProEnroll\Api\Endpoints\Auth\AdminLoginEndpoint;
 use ProEnroll\Api\Endpoints\Auth\FirebaseSessionEndpoint;
 use ProEnroll\Api\Endpoints\Auth\LogoutEndpoint;
@@ -43,6 +45,7 @@ use ProEnroll\Api\Endpoints\Customer\ProDetailEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProfileEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProsSearchEndpoint;
 use ProEnroll\Api\Endpoints\Device\PushHealthEndpoint;
+use ProEnroll\Api\Endpoints\Device\PushTestEndpoint;
 use ProEnroll\Api\Endpoints\Device\PushTokenEndpoint;
 use ProEnroll\Api\Endpoints\Screens\SplashScreen;
 use ProEnroll\Api\Http\Request;
@@ -62,6 +65,7 @@ final class Router
         'POST /v1/auth/logout' => LogoutEndpoint::class,
         'POST /v1/auth/switch-role' => SwitchRoleEndpoint::class,
         'POST /v1/device/push-token' => PushTokenEndpoint::class,
+        'POST /v1/device/push-test' => PushTestEndpoint::class,
         'GET /v1/health/push' => PushHealthEndpoint::class,
         'GET /v1/screens/splash' => SplashScreen::class,
         'GET /v1/screens/auth-landing' => AuthLandingScreen::class,
@@ -102,6 +106,8 @@ final class Router
         'GET /v1/admin/dashboard' => AdminDashboardEndpoint::class,
         'GET /v1/admin/kyc' => AdminKycEndpoint::class,
         'GET /v1/admin/documents' => AdminDocumentsEndpoint::class,
+        'GET /v1/admin/professionals' => AdminProfessionalsEndpoint::class,
+        'GET /v1/admin/customers' => AdminCustomersEndpoint::class,
     ];
 
     public static function dispatch(Request $request): void
@@ -166,6 +172,26 @@ final class Router
 
         if (preg_match('#^POST /v1/admin/documents/(\d+)/(approve|reject)$#', $key, $m)) {
             (new AdminDocumentsEndpoint())->handle($request, (int) $m[1], $m[2]);
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/professionals/(\d+)/bookings$#', $key, $m)) {
+            (new AdminProfessionalsEndpoint())->handle($request, (int) $m[1], 'bookings');
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/professionals/(\d+)$#', $key, $m)) {
+            (new AdminProfessionalsEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/customers/(\d+)/bookings$#', $key, $m)) {
+            (new AdminCustomersEndpoint())->handle($request, (int) $m[1], 'bookings');
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/customers/(\d+)$#', $key, $m)) {
+            (new AdminCustomersEndpoint())->handle($request, (int) $m[1]);
             return;
         }
 
