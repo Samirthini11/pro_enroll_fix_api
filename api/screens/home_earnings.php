@@ -64,6 +64,8 @@ final class HomeEarningsScreen extends ScreenHandler
             'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
             'rating_count' => (int) ($pro['rating_count'] ?? 0),
             'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
+            'listing_held' => (bool) ($pro['listing_held'] ?? false),
+            'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
         ]);
     }
 }

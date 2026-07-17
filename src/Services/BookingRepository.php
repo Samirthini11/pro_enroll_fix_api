@@ -15,6 +15,12 @@ final class BookingRepository
     /** @var bool|null Cached schema probe for optional final_amount_paise column. */
     private static ?bool $hasFinalAmountColumn = null;
 
+    /** @var bool|null Cached schema probe for visit fee payment columns. */
+    private static ?bool $hasVisitFeePaymentColumns = null;
+
+    /** @var bool|null Cached schema probe for commission columns. */
+    private static ?bool $hasCommissionColumns = null;
+
     public function __construct()
     {
         $this->db = Database::connection();
@@ -27,29 +33,93 @@ final class BookingRepository
     public function create(array $data): array
     {
         $code = 'PF-' . date('Y') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
-        $this->db->prepare(
-            'INSERT INTO service_bookings
-             (booking_code, customer_id, professional_id, category_code, problem_description,
-              address_text, address_lat, address_lng, city_id, status, visit_fee_paise,
-              scheduled_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
-        )->execute([
-            $code,
-            $data['customer_id'],
-            $data['professional_id'],
-            $data['category_code'],
-            $data['problem_description'],
-            $data['address_text'],
-            $data['address_lat'] ?? null,
-            $data['address_lng'] ?? null,
-            $data['city_id'],
-            'confirmed',
-            $data['visit_fee_paise'],
-            $data['scheduled_at'],
-        ]);
+        $visitFeePaid = !empty($data['visit_fee_paid']);
+        $paymentMethod = trim((string) ($data['visit_fee_payment_method'] ?? ''));
+        if ($paymentMethod === '') {
+            $paymentMethod = $visitFeePaid ? 'upi' : null;
+        }
+
+        if ($this->hasVisitFeePaymentColumns()) {
+            $this->db->prepare(
+                'INSERT INTO service_bookings
+                 (booking_code, customer_id, professional_id, category_code, problem_description,
+                  address_text, address_lat, address_lng, city_id, status, visit_fee_paise,
+                  visit_fee_paid, visit_fee_paid_at, visit_fee_payment_method,
+                  scheduled_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, IF(?, NOW(), NULL), ?, ?, NOW(), NOW())'
+            )->execute([
+                $code,
+                $data['customer_id'],
+                $data['professional_id'],
+                $data['category_code'],
+                $data['problem_description'],
+                $data['address_text'],
+                $data['address_lat'] ?? null,
+                $data['address_lng'] ?? null,
+                $data['city_id'],
+                'confirmed',
+                $data['visit_fee_paise'],
+                $visitFeePaid ? 1 : 0,
+                $visitFeePaid ? 1 : 0,
+                $paymentMethod,
+                $data['scheduled_at'],
+            ]);
+        } else {
+            $this->db->prepare(
+                'INSERT INTO service_bookings
+                 (booking_code, customer_id, professional_id, category_code, problem_description,
+                  address_text, address_lat, address_lng, city_id, status, visit_fee_paise,
+                  scheduled_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+            )->execute([
+                $code,
+                $data['customer_id'],
+                $data['professional_id'],
+                $data['category_code'],
+                $data['problem_description'],
+                $data['address_text'],
+                $data['address_lat'] ?? null,
+                $data['address_lng'] ?? null,
+                $data['city_id'],
+                'confirmed',
+                $data['visit_fee_paise'],
+                $data['scheduled_at'],
+            ]);
+        }
 
         $id = (int) $this->db->lastInsertId();
         return $this->findById($id) ?? [];
+    }
+
+    /**
+     * Customer may cancel only before the pro is on the way (status still confirmed).
+     */
+    public function cancelForCustomer(int $bookingId, int $customerId): bool
+    {
+        $stmt = $this->db->prepare(
+            'UPDATE service_bookings
+             SET status = ?, updated_at = NOW()
+             WHERE id = ? AND customer_id = ?
+               AND status = \'confirmed\''
+        );
+        $stmt->execute(['cancelled', $bookingId, $customerId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    private function hasVisitFeePaymentColumns(): bool
+    {
+        if (self::$hasVisitFeePaymentColumns !== null) {
+            return self::$hasVisitFeePaymentColumns;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'visit_fee_paid'");
+            self::$hasVisitFeePaymentColumns = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasVisitFeePaymentColumns = false;
+        }
+
+        return self::$hasVisitFeePaymentColumns;
     }
 
     public function findById(int $id): ?array
@@ -96,6 +166,16 @@ final class BookingRepository
 
     public function markCompleted(int $bookingId, int $customerId): bool
     {
+        $booking = $this->findByIdForCustomer($bookingId, $customerId);
+        if ($booking === null) {
+            return false;
+        }
+        if (!in_array((string) $booking['status'], [
+            'in_progress', 'awaiting_payment', 'arrived', 'en_route', 'confirmed',
+        ], true)) {
+            return false;
+        }
+
         $stmt = $this->db->prepare(
             'UPDATE service_bookings
              SET status = ?, completed_at = NOW(), updated_at = NOW()
@@ -103,7 +183,13 @@ final class BookingRepository
                AND status IN (\'in_progress\', \'awaiting_payment\', \'arrived\', \'en_route\', \'confirmed\')'
         );
         $stmt->execute(['completed', $bookingId, $customerId]);
-        return $stmt->rowCount() > 0;
+        if ($stmt->rowCount() === 0) {
+            return false;
+        }
+
+        $this->settleCommissionAndCredit($bookingId, (int) $booking['professional_id']);
+
+        return true;
     }
 
     public function addRating(int $bookingId, int $customerId, int $stars, ?string $review): bool
@@ -168,6 +254,11 @@ final class BookingRepository
             'city_id' => (int) $row['city_id'],
             'city_name' => $city['name'] ?? '',
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
+            'visit_fee_paid' => (bool) ($row['visit_fee_paid'] ?? false),
+            'visit_fee_paid_at' => !empty($row['visit_fee_paid_at'])
+                ? date(DATE_ATOM, strtotime((string) $row['visit_fee_paid_at']))
+                : null,
+            'visit_fee_payment_method' => $row['visit_fee_payment_method'] ?? null,
             'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
                 ? (int) $row['final_amount_paise'] : null,
             'total_due_paise' => self::totalDuePaise($row),
@@ -192,8 +283,9 @@ final class BookingRepository
                 'review_text' => $rating['review_text'],
             ],
             'can_rate' => $row['status'] === 'completed' && $rating === null,
+            'can_cancel' => $row['status'] === 'confirmed',
             'can_mark_completed' => in_array($row['status'], [
-                'confirmed', 'en_route', 'arrived', 'in_progress', 'awaiting_payment',
+                'en_route', 'arrived', 'in_progress', 'awaiting_payment',
             ], true),
         ];
     }
@@ -397,11 +489,125 @@ final class BookingRepository
             return false;
         }
 
-        $this->db->prepare(
-            'UPDATE professionals SET jobs_completed = jobs_completed + 1, updated_at = NOW() WHERE id = ?'
-        )->execute([$professionalId]);
+        $this->settleCommissionAndCredit($bookingId, $professionalId);
 
         return true;
+    }
+
+    /**
+     * Apply visit-fee commission (or waive for free bookings) and update pro counters / hold.
+     */
+    public function settleCommissionAndCredit(int $bookingId, int $professionalId): void
+    {
+        $row = $this->findById($bookingId);
+        if ($row === null || (int) $row['professional_id'] !== $professionalId) {
+            return;
+        }
+
+        // Idempotent: customer + pro can both trigger complete.
+        if ($this->hasCommissionColumns()
+            && array_key_exists('pro_credit_paise', $row)
+            && $row['pro_credit_paise'] !== null
+        ) {
+            return;
+        }
+
+        $settings = new PlatformSettingsRepository();
+        $freeLimit = $settings->freeBookingLimit();
+        $percent = $settings->visitCommissionPercent();
+        $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
+        $final = isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
+            ? (int) $row['final_amount_paise'] : null;
+        // Platform fee is on visit charge only; credit = gross bill minus that fee.
+        $gross = ($final !== null && $final >= 100) ? $final : $visitFee;
+
+        // Job is already marked completed, so exclude it from the free-tier index.
+        $freeUsedBefore = max(0, $this->completedJobsCount($professionalId) - 1);
+        $isFree = $freeUsedBefore < $freeLimit;
+        $commission = 0;
+        if (!$isFree && $percent > 0 && $visitFee > 0) {
+            $commission = (int) round($visitFee * $percent / 100);
+            $commission = min($commission, $gross);
+        }
+        $proCredit = max(0, $gross - $commission);
+
+        if ($this->hasCommissionColumns()) {
+            $upd = $this->db->prepare(
+                'UPDATE service_bookings
+                 SET commission_paise = ?, pro_credit_paise = ?, commission_waived = ?, updated_at = NOW()
+                 WHERE id = ? AND pro_credit_paise IS NULL'
+            );
+            $upd->execute([
+                $commission,
+                $proCredit,
+                $isFree ? 1 : 0,
+                $bookingId,
+            ]);
+            if ($upd->rowCount() === 0) {
+                return;
+            }
+        }
+
+        $pros = new ProRepository();
+        $pros->incrementJobsCompleted($professionalId);
+        if ($isFree && $this->hasProFreeTierColumns()) {
+            $pros->incrementFreeBookingsUsed($professionalId);
+        }
+
+        $freeRemaining = max(0, $freeLimit - $this->freeBookingsUsed($professionalId));
+        if ($freeRemaining === 0 && $settings->holdProAfterFreeLimit()) {
+            $pros->holdListing($professionalId);
+        }
+    }
+
+    public function completedJobsCount(int $professionalId): int
+    {
+        $stmt = $this->db->prepare(
+            "SELECT COUNT(*) FROM service_bookings
+             WHERE professional_id = ? AND status = 'completed'"
+        );
+        $stmt->execute([$professionalId]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function freeBookingsUsed(int $professionalId): int
+    {
+        if ($this->hasProFreeTierColumns()) {
+            $stmt = $this->db->prepare(
+                'SELECT free_bookings_used FROM professionals WHERE id = ? LIMIT 1'
+            );
+            $stmt->execute([$professionalId]);
+            $v = $stmt->fetchColumn();
+            if ($v !== false) {
+                return (int) $v;
+            }
+        }
+
+        $settings = new PlatformSettingsRepository();
+        $limit = $settings->freeBookingLimit();
+        $completed = $this->completedJobsCount($professionalId);
+
+        return min($completed, $limit);
+    }
+
+    /** @return array<string, mixed> */
+    public function commissionMetaForProfessional(int $professionalId): array
+    {
+        $settings = new PlatformSettingsRepository();
+        $limit = $settings->freeBookingLimit();
+        $used = $this->freeBookingsUsed($professionalId);
+        $remaining = max(0, $limit - $used);
+        $pro = (new ProRepository())->findById($professionalId);
+
+        return array_merge($settings->publicPayload(), [
+            'free_bookings_used' => $used,
+            'free_bookings_remaining' => $remaining,
+            'listing_held' => (bool) ($pro['listing_held'] ?? false),
+            'commission_note' => $remaining > 0
+                ? sprintf('Next %d booking(s) have 0%% platform fee on visit charge.', $remaining)
+                : sprintf('Platform fee %d%% of visit charge applies to each completed job.', $settings->visitCommissionPercent()),
+        ]);
     }
 
     /**
@@ -424,6 +630,34 @@ final class BookingRepository
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
             'preferred_time' => date(DATE_ATOM, $scheduled),
             'expires_at' => date(DATE_ATOM, $created + 3600),
+            'commission_preview' => $this->commissionPreviewForPro((int) $row['professional_id'], (int) $row['visit_fee_paise']),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function commissionPreviewForPro(int $professionalId, int $visitFeePaise): array
+    {
+        $settings = new PlatformSettingsRepository();
+        $limit = $settings->freeBookingLimit();
+        $used = $this->freeBookingsUsed($professionalId);
+        $remaining = max(0, $limit - $used);
+        $percent = $settings->visitCommissionPercent();
+        $isFree = $remaining > 0;
+        $commission = $isFree ? 0 : (int) round($visitFeePaise * $percent / 100);
+        $credit = max(0, $visitFeePaise - $commission);
+
+        return [
+            'is_free_booking' => $isFree,
+            'free_bookings_remaining' => $remaining,
+            'visit_commission_percent' => $isFree ? 0 : $percent,
+            'commission_paise' => $commission,
+            'pro_credit_paise' => $credit,
+            // Never expose platform fee details to customers — this is pro-only.
+            'label' => $isFree
+                ? sprintf('Free booking — you keep full visit fee (%d left)', $remaining)
+                : sprintf('You receive %s after %d%% platform fee on visit charge', '₹' . number_format($credit / 100, 0), $percent),
         ];
     }
 
@@ -446,8 +680,14 @@ final class BookingRepository
             'distance_km' => self::distanceKm($row, $proLat, $proLng),
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
             'status' => self::dbStatusToApi((string) $row['status']),
+            'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
+                ? (int) $row['final_amount_paise'] : null,
             'customer_lat' => $row['address_lat'] !== null ? (float) $row['address_lat'] : null,
             'customer_lng' => $row['address_lng'] !== null ? (float) $row['address_lng'] : null,
+            'commission_preview' => $this->commissionPreviewForPro((int) $row['professional_id'], (int) $row['visit_fee_paise']),
+            'pro_credit_paise' => isset($row['pro_credit_paise']) && $row['pro_credit_paise'] !== null
+                ? (int) $row['pro_credit_paise'] : null,
+            'commission_paise' => (int) ($row['commission_paise'] ?? 0),
         ];
     }
 
@@ -548,36 +788,93 @@ final class BookingRepository
                 COALESCE(SUM(CASE WHEN completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN $amount ELSE 0 END), 0) AS week_paise,
                 COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) THEN $amount ELSE 0 END), 0) AS month_paise,
                 COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN 1 ELSE 0 END), 0) AS jobs_today,
-                COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise
+                COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise,
+                COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN commission_paise ELSE 0 END), 0) AS commission_today_paise
              FROM service_bookings
              WHERE professional_id = ?
                AND status = 'completed'
                AND completed_at IS NOT NULL"
         );
-        $stmt->execute([$professionalId]);
-        $row = $stmt->fetch();
+
+        try {
+            $stmt->execute([$professionalId]);
+            $row = $stmt->fetch();
+        } catch (\Throwable) {
+            // Older schema without commission_paise — retry without that column.
+            $stmt = $this->db->prepare(
+                "SELECT
+                    COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN $amount ELSE 0 END), 0) AS today_paise,
+                    COALESCE(SUM(CASE WHEN completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN $amount ELSE 0 END), 0) AS week_paise,
+                    COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) THEN $amount ELSE 0 END), 0) AS month_paise,
+                    COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN 1 ELSE 0 END), 0) AS jobs_today,
+                    COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise
+                 FROM service_bookings
+                 WHERE professional_id = ?
+                   AND status = 'completed'
+                   AND completed_at IS NOT NULL"
+            );
+            $stmt->execute([$professionalId]);
+            $row = $stmt->fetch();
+        }
 
         if (!is_array($row)) {
             $row = [];
         }
 
         $today = (int) ($row['today_paise'] ?? 0);
+        $meta = $this->commissionMetaForProfessional($professionalId);
 
-        return [
+        return array_merge([
             'today_paise' => $today,
             'week_paise' => (int) ($row['week_paise'] ?? 0),
             'month_paise' => (int) ($row['month_paise'] ?? 0),
             'payouts_this_month_paise' => (int) ($row['payouts_this_month_paise'] ?? 0),
             'pending_payout_paise' => $today,
             'jobs_today' => (int) ($row['jobs_today'] ?? 0),
-        ];
+            'commission_today_paise' => (int) ($row['commission_today_paise'] ?? 0),
+        ], $meta);
     }
 
     private function earningsAmountExpression(): string
     {
+        if ($this->hasCommissionColumns()) {
+            $gross = $this->hasFinalAmountColumn()
+                ? 'COALESCE(NULLIF(final_amount_paise, 0), visit_fee_paise)'
+                : 'visit_fee_paise';
+
+            return "COALESCE(pro_credit_paise, GREATEST(0, ($gross) - COALESCE(commission_paise, 0)))";
+        }
+
         return $this->hasFinalAmountColumn()
             ? 'COALESCE(NULLIF(final_amount_paise, 0), visit_fee_paise)'
             : 'visit_fee_paise';
+    }
+
+    private function hasCommissionColumns(): bool
+    {
+        if (self::$hasCommissionColumns !== null) {
+            return self::$hasCommissionColumns;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'pro_credit_paise'");
+            self::$hasCommissionColumns = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasCommissionColumns = false;
+        }
+
+        return self::$hasCommissionColumns;
+    }
+
+    private function hasProFreeTierColumns(): bool
+    {
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'free_bookings_used'");
+
+            return $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function hasFinalAmountColumn(): bool

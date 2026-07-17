@@ -94,6 +94,7 @@ final class ProRepository
             'full_name', 'display_name', 'city_id', 'home_lat', 'home_lng',
             'work_radius_km', 'visit_fee_paise',
             'is_available', 'kyc_status', 'kyc_rejected_reason',
+            'listing_held', 'free_bookings_used',
             'aadhaar_last4', 'face_match_score', 'upi_id',
             'bank_account_no', 'bank_ifsc', 'language_code',
         ];
@@ -197,11 +198,15 @@ final class ProRepository
     ): array {
         $useGeo = $customerLat !== null && $customerLng !== null;
 
+        $heldFilter = $this->hasListingHeldColumn()
+            ? ' AND COALESCE(p.listing_held, 0) = 0'
+            : '';
+
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
                   AND p.is_available = 1
-                  AND p.kyc_status = \'verified\'';
+                  AND p.kyc_status = \'verified\'' . $heldFilter;
         $params = [];
 
         if (!$useGeo) {
@@ -427,11 +432,82 @@ final class ProRepository
             'jobs_completed' => (int) $pro['jobs_completed'],
             'pro_score' => (int) $pro['pro_score'],
             'language_code' => $pro['language_code'] ?? 'en',
+            'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
+            'listing_held' => (bool) ($pro['listing_held'] ?? false),
             'skills' => array_map(static fn ($s) => [
                 'category_code' => $s['category_code'],
                 'experience_years' => (int) $s['experience_years'],
                 'is_primary' => (bool) $s['is_primary'],
             ], $skills),
         ];
+    }
+
+    public function incrementJobsCompleted(int $professionalId): void
+    {
+        $this->db->prepare(
+            'UPDATE professionals SET jobs_completed = jobs_completed + 1, updated_at = NOW() WHERE id = ?'
+        )->execute([$professionalId]);
+    }
+
+    public function incrementFreeBookingsUsed(int $professionalId): void
+    {
+        if (!$this->hasFreeBookingsUsedColumn()) {
+            return;
+        }
+        $this->db->prepare(
+            'UPDATE professionals
+             SET free_bookings_used = free_bookings_used + 1, updated_at = NOW()
+             WHERE id = ?'
+        )->execute([$professionalId]);
+    }
+
+    /** Hold listing: go offline and hide from customer search. */
+    public function holdListing(int $professionalId): void
+    {
+        if ($this->hasListingHeldColumn()) {
+            $this->db->prepare(
+                'UPDATE professionals
+                 SET listing_held = 1, is_available = 0, updated_at = NOW()
+                 WHERE id = ?'
+            )->execute([$professionalId]);
+        } else {
+            $this->db->prepare(
+                'UPDATE professionals SET is_available = 0, updated_at = NOW() WHERE id = ?'
+            )->execute([$professionalId]);
+        }
+    }
+
+    public function isListingHeld(int $professionalId): bool
+    {
+        if (!$this->hasListingHeldColumn()) {
+            return false;
+        }
+        $stmt = $this->db->prepare('SELECT listing_held FROM professionals WHERE id = ? LIMIT 1');
+        $stmt->execute([$professionalId]);
+        $v = $stmt->fetchColumn();
+
+        return (int) $v === 1;
+    }
+
+    private function hasListingHeldColumn(): bool
+    {
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'listing_held'");
+
+            return $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function hasFreeBookingsUsedColumn(): bool
+    {
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'free_bookings_used'");
+
+            return $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

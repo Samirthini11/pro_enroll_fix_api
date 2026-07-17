@@ -45,6 +45,14 @@ final class BookingPushNotifier
         self::safe(static fn () => (new PushNotificationService())->notifyCustomerBookingConfirmed($booking, $pro));
     }
 
+    public static function cancelledForPro(array $booking): void
+    {
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyProfessionalBookingCancelled($booking),
+            'booking_cancelled_pro',
+        );
+    }
+
     /** @param callable(): int $fn */
     private static function safe(callable $fn, string $label = 'push'): void
     {

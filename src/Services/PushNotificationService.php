@@ -123,6 +123,33 @@ final class PushNotificationService
         );
     }
 
+    public function notifyProfessionalBookingCancelled(array $booking): int
+    {
+        $pro = $this->proForBooking($booking);
+        if ($pro === null) {
+            return 0;
+        }
+
+        $tokens = $this->professionalTokens($pro);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $code = (string) ($booking['booking_code'] ?? '');
+        $bookingId = (string) ($booking['id'] ?? '');
+
+        return $this->sendToTokens(
+            $tokens,
+            'Booking cancelled',
+            'Customer cancelled booking' . ($code !== '' ? " {$code}" : '') . ' before you were on the way.',
+            [
+                'type' => 'booking_cancelled',
+                'booking_id' => $bookingId,
+                'route' => '/home',
+            ],
+        );
+    }
+
     public function notifyCustomerBookingConfirmed(array $booking, ?array $pro = null): int
     {
         $pro ??= $this->proForBooking($booking);
@@ -138,7 +165,7 @@ final class PushNotificationService
         return $this->sendToTokens(
             $tokens,
             'Booking confirmed',
-            "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '.',
+            "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '. Visit fee paid in app.',
             [
                 'type' => 'booking_confirmed',
                 'booking_id' => $bookingId,

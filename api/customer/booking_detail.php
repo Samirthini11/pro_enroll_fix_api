@@ -13,6 +13,7 @@ use ProEnroll\Api\Services\BookingRepository;
 
 /**
  * GET  /v1/customer/bookings/{id}
+ * POST /v1/customer/bookings/{id}/cancel
  * POST /v1/customer/bookings/{id}/complete
  * POST /v1/customer/bookings/{id}/rating
  */
@@ -33,6 +34,28 @@ final class BookingDetailEndpoint
 
         $bookings = new BookingRepository();
         $path = $request->path;
+
+        if (str_ends_with($path, '/cancel') && $request->method === 'POST') {
+            $before = $bookings->findByIdForCustomer($bookingId, $customerId);
+            if ($before === null) {
+                Response::fail('Booking not found', 404, 'not_found');
+                return;
+            }
+            if (!$bookings->cancelForCustomer($bookingId, $customerId)) {
+                Response::fail(
+                    'Cannot cancel after the technician is on the way',
+                    400,
+                    'invalid_state',
+                );
+                return;
+            }
+            $row = $bookings->findByIdForCustomer($bookingId, $customerId);
+            if ($row !== null) {
+                BookingPushNotifier::cancelledForPro($row);
+            }
+            Response::ok(['booking' => $bookings->bookingPayload($row ?? [])]);
+            return;
+        }
 
         if (str_ends_with($path, '/complete') && $request->method === 'POST') {
             $before = $bookings->findByIdForCustomer($bookingId, $customerId);

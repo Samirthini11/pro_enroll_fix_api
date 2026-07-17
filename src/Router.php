@@ -145,6 +145,11 @@ final class Router
             return;
         }
 
+        if (preg_match('#^POST /v1/customer/bookings/(\d+)/cancel$#', $key, $m)) {
+            (new BookingDetailEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
         if (preg_match('#^POST /v1/customer/bookings/(\d+)/complete$#', $key, $m)) {
             (new BookingDetailEndpoint())->handle($request, (int) $m[1]);
             return;

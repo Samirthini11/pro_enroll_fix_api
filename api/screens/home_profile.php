@@ -40,7 +40,17 @@ final class HomeProfileScreen extends ScreenHandler
                 }
             }
             if (array_key_exists('is_available', $request->body)) {
-                $fields['is_available'] = $request->body['is_available'] ? 1 : 0;
+                $wantOnline = (bool) $request->body['is_available'];
+                $pro = $this->proRow($request);
+                if ($wantOnline && $pro !== null && !empty($pro['listing_held'])) {
+                    Response::fail(
+                        'Your free bookings are used up. Listing is on hold — contact support to continue receiving jobs.',
+                        403,
+                        'listing_held',
+                    );
+                    return;
+                }
+                $fields['is_available'] = $wantOnline ? 1 : 0;
             }
             $this->pros->updateProfile($uid, $fields);
             Response::ok([

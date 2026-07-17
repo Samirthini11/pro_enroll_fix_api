@@ -174,6 +174,10 @@ final class JobActiveScreen extends ScreenHandler
                 BookingPushNotifier::completedForCustomer($completed, $pro, $amount);
             }
 
+            $proLat = isset($pro['last_lat']) ? (float) $pro['last_lat'] : null;
+            $proLng = isset($pro['last_lng']) ? (float) $pro['last_lng'] : null;
+            $row = $completed ?? $bookings->findById($bookingId);
+
             Response::ok([
 
                 'screen' => 'job_active',
@@ -181,6 +185,10 @@ final class JobActiveScreen extends ScreenHandler
                 'status' => 'completed',
 
                 'final_amount_paise' => $amount,
+
+                'active_job' => $row !== null
+                    ? $bookings->activeJobPayload($row, $proLat, $proLng)
+                    : null,
 
             ]);
 

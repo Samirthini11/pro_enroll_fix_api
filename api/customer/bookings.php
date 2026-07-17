@@ -86,6 +86,28 @@ final class BookingsEndpoint
                 return;
             }
 
+            $visitFeePaise = (int) ($request->input('visit_fee_paise') ?: $pro['visit_fee_paise']);
+            if ($visitFeePaise < 100) {
+                Response::fail('visit_fee_paise required', 422, 'validation');
+                return;
+            }
+
+            $paymentMethod = strtolower(trim((string) $request->input('visit_fee_payment_method', 'upi')));
+            if (!in_array($paymentMethod, ['upi', 'card', 'netbanking'], true)) {
+                Response::fail('visit_fee_payment_method must be upi, card, or netbanking', 422, 'validation');
+                return;
+            }
+
+            // Visit fee must be collected via the app at booking time.
+            $visitFeePaid = $request->input('visit_fee_paid', true);
+            if (is_string($visitFeePaid)) {
+                $visitFeePaid = !in_array(strtolower($visitFeePaid), ['0', 'false', 'no'], true);
+            }
+            if (!$visitFeePaid) {
+                Response::fail('Visit fee must be paid in the app to confirm booking', 422, 'visit_fee_required');
+                return;
+            }
+
             $row = $bookings->create([
                 'customer_id' => $customerId,
                 'professional_id' => $proId,
@@ -95,7 +117,9 @@ final class BookingsEndpoint
                 'address_lat' => $addressLat,
                 'address_lng' => $addressLng,
                 'city_id' => $cityId,
-                'visit_fee_paise' => (int) ($request->input('visit_fee_paise') ?: $pro['visit_fee_paise']),
+                'visit_fee_paise' => $visitFeePaise,
+                'visit_fee_paid' => true,
+                'visit_fee_payment_method' => $paymentMethod,
                 'scheduled_at' => date('Y-m-d H:i:s', $scheduledTs),
             ]);
 

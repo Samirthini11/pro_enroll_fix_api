@@ -378,7 +378,7 @@ final class AdminRepository
         if (!$this->hasProDocumentsTable()) {
             return [];
         }
-        $sql = 'SELECT d.*, p.full_name, p.display_name, p.city_id
+        $sql = 'SELECT d.*, p.full_name, ' . $this->proDisplayNameSelectSql('p') . ', p.city_id
                 FROM pro_documents d
                 INNER JOIN professionals p ON p.id = d.professional_id
                 WHERE d.kind IN (\'shop_photo\', \'cert\')';
@@ -761,7 +761,7 @@ final class AdminRepository
             : 'INNER JOIN professionals p ON p.id = b.professional_id';
         $counterpartyName = $counterparty === 'customer'
             ? 'c.full_name AS counterparty_name'
-            : 'COALESCE(p.display_name, p.full_name) AS counterparty_name';
+            : $this->proCounterpartyNameSql();
 
         $sql = "SELECT b.*, $counterpartyName
                 FROM service_bookings b
@@ -841,6 +841,26 @@ final class AdminRepository
         }
 
         return $code;
+    }
+
+    /** SQL fragment: display_name column or NULL alias when column missing. */
+    private function proDisplayNameSelectSql(string $alias = 'p'): string
+    {
+        if ($this->hasColumn('professionals', 'display_name')) {
+            return "{$alias}.display_name";
+        }
+
+        return 'NULL AS display_name';
+    }
+
+    /** SQL fragment: professional name for booking counterparty. */
+    private function proCounterpartyNameSql(): string
+    {
+        if ($this->hasColumn('professionals', 'display_name')) {
+            return "COALESCE(NULLIF(p.display_name, ''), p.full_name) AS counterparty_name";
+        }
+
+        return 'p.full_name AS counterparty_name';
     }
 
     private function hasColumn(string $table, string $column): bool
