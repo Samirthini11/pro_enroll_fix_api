@@ -15,6 +15,7 @@ use ProEnroll\Api\Services\BookingRepository;
  * GET  /v1/customer/bookings/{id}
  * POST /v1/customer/bookings/{id}/cancel
  * POST /v1/customer/bookings/{id}/complete
+ * POST /v1/customer/bookings/{id}/pay-visit-fee
  * POST /v1/customer/bookings/{id}/rating
  */
 final class BookingDetailEndpoint
@@ -57,6 +58,33 @@ final class BookingDetailEndpoint
             return;
         }
 
+        if (str_ends_with($path, '/pay-visit-fee') && $request->method === 'POST') {
+            $method = strtolower(trim((string) $request->input('visit_fee_payment_method', 'upi')));
+            if (!in_array($method, ['upi', 'card', 'netbanking'], true)) {
+                Response::fail('visit_fee_payment_method must be upi, card, or netbanking', 422, 'validation');
+                return;
+            }
+            $before = $bookings->findByIdForCustomer($bookingId, $customerId);
+            if ($before === null) {
+                Response::fail('Booking not found', 404, 'not_found');
+                return;
+            }
+            $row = $bookings->payVisitFeeForCustomer($bookingId, $customerId, $method);
+            if ($row === null) {
+                Response::fail(
+                    'Visit fee can be paid after the technician finishes the job',
+                    400,
+                    'invalid_state',
+                );
+                return;
+            }
+            if (empty($before['visit_fee_paid'])) {
+                BookingPushNotifier::completedForCustomer($row);
+            }
+            Response::ok(['booking' => $bookings->bookingPayload($row)]);
+            return;
+        }
+
         if (str_ends_with($path, '/complete') && $request->method === 'POST') {
             $before = $bookings->findByIdForCustomer($bookingId, $customerId);
             if (!$bookings->markCompleted($bookingId, $customerId)) {
@@ -64,7 +92,7 @@ final class BookingDetailEndpoint
                 return;
             }
             $row = $bookings->findByIdForCustomer($bookingId, $customerId);
-            if ($before !== null && $row !== null) {
+            if ($before !== null && $row !== null && ($row['status'] ?? '') === 'completed') {
                 BookingPushNotifier::completedForCustomer($row);
             }
             Response::ok(['booking' => $bookings->bookingPayload($row ?? [])]);

@@ -165,7 +165,7 @@ final class PushNotificationService
         return $this->sendToTokens(
             $tokens,
             'Booking confirmed',
-            "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '. Visit fee paid in app.',
+            "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '. Visit fee is paid after work is done.',
             [
                 'type' => 'booking_confirmed',
                 'booking_id' => $bookingId,
@@ -237,6 +237,7 @@ final class PushNotificationService
         $bookingId = (string) ($booking['id'] ?? '');
 
         [$title, $body] = match ($apiStatus) {
+            'awaiting_payment' => ['Pay visit fee', "{$proName} finished the job. Pay the visit fee in the app to complete."],
             'on_the_way' => ['Pro on the way', "{$proName} is heading to your location."],
             'in_progress' => ['Work started', "{$proName} has started working on your job."],
             'completed' => ['Job update', "{$proName} marked the job as done."],

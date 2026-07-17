@@ -155,6 +155,11 @@ final class Router
             return;
         }
 
+        if (preg_match('#^POST /v1/customer/bookings/(\d+)/pay-visit-fee$#', $key, $m)) {
+            (new BookingDetailEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
         if (preg_match('#^POST /v1/customer/bookings/(\d+)/rating$#', $key, $m)) {
             (new BookingDetailEndpoint())->handle($request, (int) $m[1]);
             return;

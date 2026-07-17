@@ -170,6 +170,28 @@ final class BookingRepository
         if ($booking === null) {
             return false;
         }
+
+        // Visit fee unpaid → move to payment due (do not settle yet).
+        if (empty($booking['visit_fee_paid'])) {
+            if (!in_array((string) $booking['status'], [
+                'in_progress', 'arrived', 'en_route', 'awaiting_payment',
+            ], true)) {
+                return false;
+            }
+            if ((string) $booking['status'] === 'awaiting_payment') {
+                return true;
+            }
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'awaiting_payment', updated_at = NOW()
+                 WHERE id = ? AND customer_id = ?
+                   AND status IN ('in_progress', 'arrived', 'en_route')"
+            );
+            $stmt->execute([$bookingId, $customerId]);
+
+            return $stmt->rowCount() > 0;
+        }
+
         if (!in_array((string) $booking['status'], [
             'in_progress', 'awaiting_payment', 'arrived', 'en_route', 'confirmed',
         ], true)) {
@@ -284,9 +306,10 @@ final class BookingRepository
             ],
             'can_rate' => $row['status'] === 'completed' && $rating === null,
             'can_cancel' => $row['status'] === 'confirmed',
-            'can_mark_completed' => in_array($row['status'], [
+            'can_mark_completed' => !empty($row['visit_fee_paid']) && in_array($row['status'], [
                 'en_route', 'arrived', 'in_progress', 'awaiting_payment',
             ], true),
+            'can_pay_visit_fee' => empty($row['visit_fee_paid']) && ($row['status'] ?? '') === 'awaiting_payment',
         ];
     }
 
@@ -467,10 +490,11 @@ final class BookingRepository
 
     public function completeActiveJob(int $bookingId, int $professionalId, ?int $finalAmountPaise = null): bool
     {
+        // Work done → await visit-fee payment from customer before settling credit.
         if ($finalAmountPaise !== null && $finalAmountPaise >= 100 && $this->hasFinalAmountColumn()) {
             $stmt = $this->db->prepare(
                 "UPDATE service_bookings
-                 SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+                 SET status = 'awaiting_payment', updated_at = NOW(),
                      final_amount_paise = ?
                  WHERE id = ? AND professional_id = ?
                    AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
@@ -479,19 +503,74 @@ final class BookingRepository
         } else {
             $stmt = $this->db->prepare(
                 "UPDATE service_bookings
-                 SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+                 SET status = 'awaiting_payment', updated_at = NOW()
                  WHERE id = ? AND professional_id = ?
                    AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
             );
             $stmt->execute([$bookingId, $professionalId]);
         }
-        if ($stmt->rowCount() === 0) {
-            return false;
+
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Customer pays visit fee after work is done → completed + settle pro credit.
+     *
+     * @return array<string, mixed>|null updated booking row
+     */
+    public function payVisitFeeForCustomer(int $bookingId, int $customerId, string $paymentMethod): ?array
+    {
+        $booking = $this->findByIdForCustomer($bookingId, $customerId);
+        if ($booking === null) {
+            return null;
+        }
+        if (!empty($booking['visit_fee_paid'])) {
+            return $booking;
+        }
+        if (!in_array((string) $booking['status'], [
+            'awaiting_payment',
+        ], true)) {
+            return null;
         }
 
-        $this->settleCommissionAndCredit($bookingId, $professionalId);
+        $method = strtolower(trim($paymentMethod));
+        if (!in_array($method, ['upi', 'card', 'netbanking'], true)) {
+            $method = 'upi';
+        }
 
-        return true;
+        if ($this->hasVisitFeePaymentColumns()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET visit_fee_paid = 1,
+                     visit_fee_paid_at = NOW(),
+                     visit_fee_payment_method = ?,
+                     status = 'completed',
+                     completed_at = COALESCE(completed_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ? AND customer_id = ?
+                   AND status = 'awaiting_payment'
+                   AND COALESCE(visit_fee_paid, 0) = 0"
+            );
+            $stmt->execute([$method, $bookingId, $customerId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'completed',
+                     completed_at = COALESCE(completed_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ? AND customer_id = ?
+                   AND status = 'awaiting_payment'"
+            );
+            $stmt->execute([$bookingId, $customerId]);
+        }
+
+        if ($stmt->rowCount() === 0) {
+            return $this->findByIdForCustomer($bookingId, $customerId);
+        }
+
+        $this->settleCommissionAndCredit($bookingId, (int) $booking['professional_id']);
+
+        return $this->findByIdForCustomer($bookingId, $customerId);
     }
 
     /**
@@ -521,8 +600,12 @@ final class BookingRepository
         // Platform fee is on visit charge only; credit = gross bill minus that fee.
         $gross = ($final !== null && $final >= 100) ? $final : $visitFee;
 
-        // Job is already marked completed, so exclude it from the free-tier index.
-        $freeUsedBefore = max(0, $this->completedJobsCount($professionalId) - 1);
+        // Free tier is based on completed jobs; this booking may already be completed.
+        $completed = $this->completedJobsCount($professionalId);
+        $status = (string) ($row['status'] ?? '');
+        $freeUsedBefore = $status === 'completed'
+            ? max(0, $completed - 1)
+            : $completed;
         $isFree = $freeUsedBefore < $freeLimit;
         $commission = 0;
         if (!$isFree && $percent > 0 && $visitFee > 0) {
@@ -743,7 +826,8 @@ final class BookingRepository
         return match ($db) {
             'en_route' => 'on_the_way',
             'in_progress' => 'in_progress',
-            'awaiting_payment' => 'in_progress',
+            // Pro finished work; show completed UI while customer pays visit fee.
+            'awaiting_payment' => 'completed',
             'completed' => 'completed',
             'cancelled' => 'cancelled',
             default => 'accepted',
@@ -781,6 +865,7 @@ final class BookingRepository
     public function earningsSummaryForProfessional(int $professionalId): array
     {
         $amount = $this->earningsAmountExpression();
+        $walletExpr = $this->walletBalanceExpression($amount);
 
         $stmt = $this->db->prepare(
             "SELECT
@@ -789,7 +874,8 @@ final class BookingRepository
                 COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) THEN $amount ELSE 0 END), 0) AS month_paise,
                 COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN 1 ELSE 0 END), 0) AS jobs_today,
                 COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise,
-                COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN commission_paise ELSE 0 END), 0) AS commission_today_paise
+                COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN commission_paise ELSE 0 END), 0) AS commission_today_paise,
+                COALESCE(SUM($walletExpr), 0) AS wallet_balance_paise
              FROM service_bookings
              WHERE professional_id = ?
                AND status = 'completed'
@@ -800,14 +886,15 @@ final class BookingRepository
             $stmt->execute([$professionalId]);
             $row = $stmt->fetch();
         } catch (\Throwable) {
-            // Older schema without commission_paise — retry without that column.
+            // Older schema without commission / paid_out columns.
             $stmt = $this->db->prepare(
                 "SELECT
                     COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN $amount ELSE 0 END), 0) AS today_paise,
                     COALESCE(SUM(CASE WHEN completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN $amount ELSE 0 END), 0) AS week_paise,
                     COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) THEN $amount ELSE 0 END), 0) AS month_paise,
                     COALESCE(SUM(CASE WHEN DATE(completed_at) = CURDATE() THEN 1 ELSE 0 END), 0) AS jobs_today,
-                    COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise
+                    COALESCE(SUM(CASE WHEN YEAR(completed_at) = YEAR(CURDATE()) AND MONTH(completed_at) = MONTH(CURDATE()) AND DATE(completed_at) < CURDATE() THEN $amount ELSE 0 END), 0) AS payouts_this_month_paise,
+                    COALESCE(SUM($amount), 0) AS wallet_balance_paise
                  FROM service_bookings
                  WHERE professional_id = ?
                    AND status = 'completed'
@@ -822,6 +909,7 @@ final class BookingRepository
         }
 
         $today = (int) ($row['today_paise'] ?? 0);
+        $wallet = (int) ($row['wallet_balance_paise'] ?? $today);
         $meta = $this->commissionMetaForProfessional($professionalId);
 
         return array_merge([
@@ -829,10 +917,38 @@ final class BookingRepository
             'week_paise' => (int) ($row['week_paise'] ?? 0),
             'month_paise' => (int) ($row['month_paise'] ?? 0),
             'payouts_this_month_paise' => (int) ($row['payouts_this_month_paise'] ?? 0),
-            'pending_payout_paise' => $today,
+            'pending_payout_paise' => $wallet,
+            'wallet_balance_paise' => $wallet,
             'jobs_today' => (int) ($row['jobs_today'] ?? 0),
             'commission_today_paise' => (int) ($row['commission_today_paise'] ?? 0),
         ], $meta);
+    }
+
+    /** SQL fragment: credit amount still in wallet (not paid out). */
+    private function walletBalanceExpression(string $amountExpr): string
+    {
+        if ($this->hasPaidOutColumn()) {
+            return "CASE WHEN paid_out_at IS NULL THEN ($amountExpr) ELSE 0 END";
+        }
+
+        return $amountExpr;
+    }
+
+    private function hasPaidOutColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'paid_out_at'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
     }
 
     private function earningsAmountExpression(): string

@@ -171,7 +171,8 @@ final class JobActiveScreen extends ScreenHandler
 
             $completed = $bookings->findById($bookingId);
             if ($completed !== null) {
-                BookingPushNotifier::completedForCustomer($completed, $pro, $amount);
+                // Work finished — ask customer to pay visit fee in app.
+                BookingPushNotifier::statusForCustomer($completed, 'awaiting_payment', $pro);
             }
 
             $proLat = isset($pro['last_lat']) ? (float) $pro['last_lat'] : null;
@@ -185,6 +186,8 @@ final class JobActiveScreen extends ScreenHandler
                 'status' => 'completed',
 
                 'final_amount_paise' => $amount,
+
+                'payment_due' => true,
 
                 'active_job' => $row !== null
                     ? $bookings->activeJobPayload($row, $proLat, $proLng)
