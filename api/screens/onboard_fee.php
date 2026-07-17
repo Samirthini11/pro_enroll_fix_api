@@ -36,10 +36,24 @@ final class OnboardFeeScreen extends ScreenHandler
         }
 
         $fee = (int) $request->input('visit_fee_paise', 0);
-        if ($fee < 100 || $fee > 100000) {
-            Response::fail('visit_fee_paise must be between 100 and 100000 (₹1–₹1000)', 422);
+        $settings = new \ProEnroll\Api\Services\PlatformSettingsRepository();
+        $min = $settings->visitFeeMinPaise();
+        $max = $settings->visitFeeMaxPaise();
+        if ($fee < $min || $fee > $max) {
+            Response::fail(
+                sprintf(
+                    'visit_fee_paise must be between %d and %d (₹%d–₹%d)',
+                    $min,
+                    $max,
+                    (int) ($min / 100),
+                    (int) ($max / 100),
+                ),
+                422,
+            );
             return;
         }
+
+        $fee = $settings->clampVisitFeePaise($fee);
 
         $this->ensurePro($request);
         $this->pros->updateProfile($this->uid($request), ['visit_fee_paise' => $fee]);

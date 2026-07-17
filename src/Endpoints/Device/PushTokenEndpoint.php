@@ -43,7 +43,9 @@ final class PushTokenEndpoint
             $platform = 'android';
         }
 
-        $phone = trim((string) ($request->authUser['phone'] ?? ''));
+        $phone = DeviceTokenRepository::normalizePhoneE164(
+            trim((string) ($request->authUser['phone'] ?? '')),
+        );
         if ($phone === '') {
             Response::fail('Invalid session', 401, 'unauthorized');
             return;
@@ -121,24 +123,32 @@ final class PushTokenEndpoint
 
     private function resolveAuthUid(string $phone, string $role, string $jwtSub): string
     {
+        $phone = DeviceTokenRepository::normalizePhoneE164($phone);
+
         if ($role === 'customer') {
             $customer = (new CustomerRepository())->upsertFromPhone($phone);
             $authUid = (string) ($customer['auth_uid'] ?? '');
             if ($authUid !== '') {
                 return $authUid;
             }
-        } else {
-            $pro = (new ProRepository())->findByPhone($phone);
-            if ($pro !== null) {
-                $uid = (string) ($pro['firebase_uid'] ?? '');
-                if ($uid !== '') {
-                    return $uid;
-                }
-            }
 
-            return '';
+            return $jwtSub !== '' ? $jwtSub : '';
         }
 
+        $pro = (new ProRepository())->findByPhone($phone);
+        if ($pro === null && $jwtSub !== '') {
+            // JWT may already be the professional firebase_uid.
+            $pro = (new ProRepository())->findByFirebaseUid($jwtSub);
+        }
+        if ($pro !== null) {
+            $uid = (string) ($pro['firebase_uid'] ?? '');
+            if ($uid !== '') {
+                return $uid;
+            }
+        }
+
+        // Not enrolled as pro yet — still store token under JWT sub so later
+        // lookups by phone (after enrollment) and jwt sub both work.
         return $jwtSub;
     }
 }

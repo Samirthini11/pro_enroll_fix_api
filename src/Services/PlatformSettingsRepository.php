@@ -53,6 +53,35 @@ final class PlatformSettingsRepository
         return in_array(strtolower($raw), ['1', 'true', 'yes', 'on'], true);
     }
 
+    /** Max visit fee in paise. Default ₹200 (20000). */
+    public function visitFeeMaxPaise(): int
+    {
+        $v = (int) $this->get(
+            'visit_fee_max_paise',
+            (string) (Config::get('VISIT_FEE_MAX_PAISE') ?? '20000'),
+        );
+
+        return max(100, $v);
+    }
+
+    /** Min visit fee in paise. Default ₹50 (5000). */
+    public function visitFeeMinPaise(): int
+    {
+        $v = (int) $this->get(
+            'visit_fee_min_paise',
+            (string) (Config::get('VISIT_FEE_MIN_PAISE') ?? '5000'),
+        );
+        $max = $this->visitFeeMaxPaise();
+
+        return max(100, min($v, $max));
+    }
+
+    /** Clamp a visit fee to platform min/max. */
+    public function clampVisitFeePaise(int $paise): int
+    {
+        return max($this->visitFeeMinPaise(), min($this->visitFeeMaxPaise(), $paise));
+    }
+
     /** @return array<string, mixed> */
     public function publicPayload(): array
     {
@@ -60,6 +89,8 @@ final class PlatformSettingsRepository
             'visit_commission_percent' => $this->visitCommissionPercent(),
             'free_booking_limit' => $this->freeBookingLimit(),
             'hold_pro_after_free_limit' => $this->holdProAfterFreeLimit(),
+            'visit_fee_min_paise' => $this->visitFeeMinPaise(),
+            'visit_fee_max_paise' => $this->visitFeeMaxPaise(),
         ];
     }
 

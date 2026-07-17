@@ -284,6 +284,7 @@ final class BookingRepository
             'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
                 ? (int) $row['final_amount_paise'] : null,
             'total_due_paise' => self::totalDuePaise($row),
+            // Never expose platform commission / pro credit to customers.
             'status_label' => self::statusLabel((string) $row['status']),
             'scheduled_at' => date(DATE_ATOM, strtotime($row['scheduled_at'])),
             'completed_at' => $row['completed_at']

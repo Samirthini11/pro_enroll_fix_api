@@ -86,8 +86,10 @@ final class BookingsEndpoint
                 return;
             }
 
+            $settings = new \ProEnroll\Api\Services\PlatformSettingsRepository();
             $visitFeePaise = (int) ($request->input('visit_fee_paise') ?: $pro['visit_fee_paise']);
-            if ($visitFeePaise < 100) {
+            $visitFeePaise = $settings->clampVisitFeePaise($visitFeePaise);
+            if ($visitFeePaise < $settings->visitFeeMinPaise()) {
                 Response::fail('visit_fee_paise required', 422, 'validation');
                 return;
             }

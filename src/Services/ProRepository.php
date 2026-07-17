@@ -29,8 +29,16 @@ final class ProRepository
 
     public function findByPhone(string $phoneE164): ?array
     {
-        $stmt = $this->db->prepare('SELECT * FROM professionals WHERE phone_e164 = ? LIMIT 1');
-        $stmt->execute([$phoneE164]);
+        $variants = DeviceTokenRepository::phoneVariants($phoneE164);
+        if ($variants === []) {
+            return null;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($variants), '?'));
+        $stmt = $this->db->prepare(
+            "SELECT * FROM professionals WHERE phone_e164 IN ({$placeholders}) LIMIT 1"
+        );
+        $stmt->execute($variants);
         $row = $stmt->fetch();
         return $row ?: null;
     }
@@ -103,6 +111,9 @@ final class ProRepository
         foreach ($fields as $key => $value) {
             if (!in_array($key, $allowed, true)) {
                 continue;
+            }
+            if ($key === 'visit_fee_paise') {
+                $value = (new PlatformSettingsRepository())->clampVisitFeePaise((int) $value);
             }
             $sets[] = "$key = ?";
             $params[] = $value;
@@ -341,7 +352,8 @@ final class ProRepository
             'phone_masked' => self::maskPhone($pro['phone_e164'] ?? ''),
             'city_id' => $cityId,
             'work_radius_km' => (int) $pro['work_radius_km'],
-            'visit_fee_paise' => (int) $pro['visit_fee_paise'],
+            'visit_fee_paise' => (new PlatformSettingsRepository())
+                ->clampVisitFeePaise((int) $pro['visit_fee_paise']),
             'is_available' => (bool) $pro['is_available'],
             'kyc_verified' => $pro['kyc_status'] === 'verified',
             'kyc_status' => $pro['kyc_status'],

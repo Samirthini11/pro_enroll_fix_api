@@ -53,6 +53,14 @@ final class BookingPushNotifier
         );
     }
 
+    public static function visitFeePaidForPro(array $booking): void
+    {
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyProfessionalVisitFeePaid($booking),
+            'visit_fee_paid_pro',
+        );
+    }
+
     /** @param callable(): int $fn */
     private static function safe(callable $fn, string $label = 'push'): void
     {

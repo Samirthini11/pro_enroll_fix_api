@@ -27,6 +27,7 @@ final class DeviceTokenRepository
         string $role,
         ?string $deviceLabel = null,
     ): void {
+        $phoneE164 = self::normalizePhoneE164($phoneE164);
         $stmt = $this->db->prepare(
             'INSERT INTO push_device_tokens
                 (auth_uid, phone_e164, fcm_token, platform, role, device_label, created_at, updated_at)
@@ -95,16 +96,19 @@ final class DeviceTokenRepository
             return [];
         }
 
-        $stmt = $this->db->prepare(
-            'SELECT pdt.fcm_token
-             FROM push_device_tokens pdt
-             INNER JOIN customers c
-               ON c.auth_uid = pdt.auth_uid OR c.phone_e164 = pdt.phone_e164
-             WHERE c.id = ? AND pdt.role = ?'
-        );
-        $stmt->execute([$customerId, 'customer']);
+        $customer = (new CustomerRepository())->findById($customerId);
+        if ($customer === null) {
+            return [];
+        }
 
-        return $this->extractTokens($stmt->fetchAll() ?: []);
+        $authUid = (string) ($customer['auth_uid'] ?? '');
+        $phone = (string) ($customer['phone_e164'] ?? '');
+
+        return array_values(array_unique(array_merge(
+            $authUid !== '' ? $this->tokensForAuthUid($authUid, 'customer') : [],
+            $phone !== '' ? $this->tokensForPhone($phone, 'customer') : [],
+            $phone !== '' ? $this->tokensForPhone($phone, 'professional') : [],
+        )));
     }
 
     public function deleteByToken(string $fcmToken): void
@@ -151,25 +155,52 @@ final class DeviceTokenRepository
     /** @return list<string> */
     public static function phoneVariants(string $phoneE164): array
     {
-        $phone = trim($phoneE164);
+        $phone = preg_replace('/[^\d+]/', '', trim($phoneE164)) ?? '';
         if ($phone === '') {
             return [];
         }
 
         $variants = [$phone];
+        $digits = ltrim($phone, '+');
 
-        if (str_starts_with($phone, '+91') && strlen($phone) >= 12) {
-            $variants[] = substr($phone, 1);
-            $variants[] = '0' . substr($phone, 3);
-        } elseif (str_starts_with($phone, '91') && strlen($phone) >= 11) {
-            $variants[] = '+' . $phone;
-            $variants[] = '0' . substr($phone, 2);
-        } elseif (str_starts_with($phone, '0') && strlen($phone) >= 10) {
-            $variants[] = '+91' . substr($phone, 1);
-            $variants[] = '91' . substr($phone, 1);
+        // Bare 10-digit Indian mobile → +91 / 91 / 0…
+        if (preg_match('/^[6-9]\d{9}$/', $digits) === 1) {
+            $variants[] = '+91' . $digits;
+            $variants[] = '91' . $digits;
+            $variants[] = '0' . $digits;
         }
 
-        return array_values(array_unique($variants));
+        if (str_starts_with($phone, '+91') && strlen($phone) >= 13) {
+            $local = substr($phone, 3);
+            $variants[] = substr($phone, 1); // 91…
+            $variants[] = '0' . $local;
+            $variants[] = $local;
+        } elseif (str_starts_with($phone, '91') && strlen($phone) >= 12 && !str_starts_with($phone, '+')) {
+            $local = substr($phone, 2);
+            $variants[] = '+' . $phone;
+            $variants[] = '0' . $local;
+            $variants[] = $local;
+        } elseif (str_starts_with($phone, '0') && strlen($phone) >= 11) {
+            $local = substr($phone, 1);
+            $variants[] = '+91' . $local;
+            $variants[] = '91' . $local;
+            $variants[] = $local;
+        }
+
+        return array_values(array_unique(array_filter($variants)));
+    }
+
+    /** Canonical +91… form when possible (for storage). */
+    public static function normalizePhoneE164(string $phoneE164): string
+    {
+        $variants = self::phoneVariants($phoneE164);
+        foreach ($variants as $v) {
+            if (str_starts_with($v, '+91') && strlen($v) === 13) {
+                return $v;
+            }
+        }
+
+        return trim($phoneE164);
     }
 
     private function ensureTable(): void

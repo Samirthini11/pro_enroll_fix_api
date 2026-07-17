@@ -150,6 +150,38 @@ final class PushNotificationService
         );
     }
 
+    public function notifyProfessionalVisitFeePaid(array $booking): int
+    {
+        $pro = $this->proForBooking($booking);
+        if ($pro === null) {
+            return 0;
+        }
+
+        $tokens = $this->professionalTokens($pro);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $code = (string) ($booking['booking_code'] ?? '');
+        $credit = isset($booking['pro_credit_paise']) && $booking['pro_credit_paise'] !== null
+            ? (int) $booking['pro_credit_paise']
+            : (int) ($booking['visit_fee_paise'] ?? 0);
+        $creditText = $credit >= 100
+            ? ' ₹' . number_format($credit / 100, 0) . ' credited to your wallet.'
+            : ' Amount credited to your wallet.';
+
+        return $this->sendToTokens(
+            $tokens,
+            'Visit fee paid',
+            'Customer paid for booking' . ($code !== '' ? " {$code}" : '') . '.' . $creditText,
+            [
+                'type' => 'visit_fee_paid',
+                'booking_id' => (string) ($booking['id'] ?? ''),
+                'route' => '/home',
+            ],
+        );
+    }
+
     public function notifyCustomerBookingConfirmed(array $booking, ?array $pro = null): int
     {
         $pro ??= $this->proForBooking($booking);

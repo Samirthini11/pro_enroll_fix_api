@@ -47,8 +47,16 @@ final class CustomerRepository
 
     public function findByPhone(string $phoneE164): ?array
     {
-        $stmt = $this->db->prepare('SELECT * FROM customers WHERE phone_e164 = ? LIMIT 1');
-        $stmt->execute([$phoneE164]);
+        $variants = DeviceTokenRepository::phoneVariants($phoneE164);
+        if ($variants === []) {
+            return null;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($variants), '?'));
+        $stmt = $this->db->prepare(
+            "SELECT * FROM customers WHERE phone_e164 IN ({$placeholders}) LIMIT 1"
+        );
+        $stmt->execute($variants);
         $row = $stmt->fetch();
         return $row ?: null;
     }
