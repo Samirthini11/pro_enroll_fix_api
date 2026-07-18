@@ -599,7 +599,7 @@ final class BookingRepository
         $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
         $final = isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
             ? (int) $row['final_amount_paise'] : null;
-        // Platform fee is on visit charge only; credit = gross bill minus that fee.
+        // Platform fee (5% of visit) is paid by pro to company UPI — wallet gets full gross.
         $gross = ($final !== null && $final >= 100) ? $final : $visitFee;
 
         // Free tier is based on completed jobs; this booking may already be completed.
@@ -614,7 +614,7 @@ final class BookingRepository
             $commission = (int) round($visitFee * $percent / 100);
             $commission = min($commission, $gross);
         }
-        $proCredit = max(0, $gross - $commission);
+        $proCredit = max(0, $gross);
 
         if ($this->hasCommissionColumns()) {
             $upd = $this->db->prepare(
@@ -684,15 +684,104 @@ final class BookingRepository
         $used = $this->freeBookingsUsed($professionalId);
         $remaining = max(0, $limit - $used);
         $pro = (new ProRepository())->findById($professionalId);
+        $feeDue = $this->platformFeeDuePaise($professionalId);
+        $upi = $settings->companyUpiId();
 
         return array_merge($settings->publicPayload(), [
             'free_bookings_used' => $used,
             'free_bookings_remaining' => $remaining,
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
+            'platform_fee_due_paise' => $feeDue,
+            'company_upi_pay_uri' => $feeDue > 0
+                ? $settings->companyUpiPayUri($feeDue, 'Pro Enroll platform fee')
+                : $settings->companyUpiPayUri(0, 'Pro Enroll platform fee'),
             'commission_note' => $remaining > 0
-                ? sprintf('Next %d booking(s) have 0%% platform fee on visit charge.', $remaining)
-                : sprintf('Platform fee %d%% of visit charge applies to each completed job.', $settings->visitCommissionPercent()),
+                ? sprintf(
+                    'Next %d booking(s) free. After that, pay %d%% platform fee to UPI %s.',
+                    $remaining,
+                    $settings->visitCommissionPercent(),
+                    $upi,
+                )
+                : sprintf(
+                    'Pay platform fee (%d%% of visit) to company UPI %s via QR / UPI app.',
+                    $settings->visitCommissionPercent(),
+                    $upi,
+                ),
         ]);
+    }
+
+    /** Unpaid platform fee (commission) for this pro — pay via company UPI. */
+    public function platformFeeDuePaise(int $professionalId): int
+    {
+        if (!$this->hasCommissionColumns()) {
+            return 0;
+        }
+
+        try {
+            if ($this->hasCommissionUpiPaidColumn()) {
+                $stmt = $this->db->prepare(
+                    "SELECT COALESCE(SUM(commission_paise), 0)
+                     FROM service_bookings
+                     WHERE professional_id = ?
+                       AND status = 'completed'
+                       AND COALESCE(commission_waived, 0) = 0
+                       AND commission_paise > 0
+                       AND commission_upi_paid_at IS NULL"
+                );
+            } else {
+                $stmt = $this->db->prepare(
+                    "SELECT COALESCE(SUM(commission_paise), 0)
+                     FROM service_bookings
+                     WHERE professional_id = ?
+                       AND status = 'completed'
+                       AND COALESCE(commission_waived, 0) = 0
+                       AND commission_paise > 0"
+                );
+            }
+            $stmt->execute([$professionalId]);
+
+            return (int) $stmt->fetchColumn();
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
+    /** Mark all unpaid platform fees as paid via company UPI. */
+    public function markPlatformFeePaidViaUpi(int $professionalId): int
+    {
+        if (!$this->hasCommissionUpiPaidColumn()) {
+            return 0;
+        }
+
+        $stmt = $this->db->prepare(
+            "UPDATE service_bookings
+             SET commission_upi_paid_at = NOW(), updated_at = NOW()
+             WHERE professional_id = ?
+               AND status = 'completed'
+               AND COALESCE(commission_waived, 0) = 0
+               AND commission_paise > 0
+               AND commission_upi_paid_at IS NULL"
+        );
+        $stmt->execute([$professionalId]);
+
+        return $stmt->rowCount();
+    }
+
+    private function hasCommissionUpiPaidColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'commission_upi_paid_at'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
     }
 
     /**
@@ -731,7 +820,8 @@ final class BookingRepository
         $percent = $settings->visitCommissionPercent();
         $isFree = $remaining > 0;
         $commission = $isFree ? 0 : (int) round($visitFeePaise * $percent / 100);
-        $credit = max(0, $visitFeePaise - $commission);
+        $credit = max(0, $visitFeePaise); // Full visit fee to wallet; fee paid via company UPI.
+        $settingsName = $settings->companyUpiId();
 
         return [
             'is_free_booking' => $isFree,
@@ -739,10 +829,15 @@ final class BookingRepository
             'visit_commission_percent' => $isFree ? 0 : $percent,
             'commission_paise' => $commission,
             'pro_credit_paise' => $credit,
-            // Never expose platform fee details to customers — this is pro-only.
+            'company_upi_id' => $settingsName,
             'label' => $isFree
-                ? sprintf('Free booking — you keep full visit fee (%d left)', $remaining)
-                : sprintf('You receive %s after %d%% platform fee on visit charge', '₹' . number_format($credit / 100, 0), $percent),
+                ? sprintf('Free booking — full visit fee to wallet (%d left)', $remaining)
+                : sprintf(
+                    'Wallet +%s · Pay platform fee %s to %s',
+                    '₹' . number_format($credit / 100, 0),
+                    '₹' . number_format($commission / 100, 0),
+                    $settingsName,
+                ),
         ];
     }
 

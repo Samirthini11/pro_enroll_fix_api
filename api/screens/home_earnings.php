@@ -11,7 +11,8 @@ use ProEnroll\Api\Services\BookingRepository;
 
 /**
  * Flutter: EarningsTab
- * GET /v1/screens/home-earnings
+ * GET  /v1/screens/home-earnings
+ * POST /v1/screens/home-earnings  { "action": "mark_platform_fee_paid" }
  */
 final class HomeEarningsScreen extends ScreenHandler
 {
@@ -25,17 +26,13 @@ final class HomeEarningsScreen extends ScreenHandler
             'payouts_this_month_paise' => 0,
             'pending_payout_paise' => 0,
             'jobs_today' => 0,
+            'platform_fee_due_paise' => 0,
         ];
     }
 
     public function handle(Request $request): void
     {
         if (!$this->requireAuth($request)) {
-            return;
-        }
-
-        if ($request->method !== 'GET') {
-            Response::fail('Method not allowed', 405);
             return;
         }
 
@@ -51,8 +48,33 @@ final class HomeEarningsScreen extends ScreenHandler
             return;
         }
 
+        $bookings = new BookingRepository();
+
+        if ($request->method === 'POST') {
+            $action = (string) $request->input('action', '');
+            if ($action !== 'mark_platform_fee_paid') {
+                Response::fail('Unknown action', 422, 'validation');
+                return;
+            }
+            $updated = $bookings->markPlatformFeePaidViaUpi((int) $pro['id']);
+            $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
+            Response::ok([
+                'screen' => 'home_earnings',
+                'marked_paid' => $updated,
+                'summary' => $summary,
+                'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
+                'rating_count' => (int) ($pro['rating_count'] ?? 0),
+                'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
+            ]);
+            return;
+        }
+
+        if ($request->method !== 'GET') {
+            Response::fail('Method not allowed', 405);
+            return;
+        }
+
         try {
-            $bookings = new BookingRepository();
             $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
         } catch (\Throwable) {
             $summary = self::emptySummary();

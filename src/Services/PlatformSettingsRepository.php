@@ -82,6 +82,46 @@ final class PlatformSettingsRepository
         return max($this->visitFeeMinPaise(), min($this->visitFeeMaxPaise(), $paise));
     }
 
+    /** Company UPI where professionals pay platform fee. */
+    public function companyUpiId(): string
+    {
+        $v = trim($this->get(
+            'company_upi_id',
+            (string) (Config::get('COMPANY_UPI_ID') ?? 'sami050699@okaxis'),
+        ));
+
+        return $v !== '' ? $v : 'sami050699@okaxis';
+    }
+
+    public function companyUpiName(): string
+    {
+        $v = trim($this->get(
+            'company_upi_name',
+            (string) (Config::get('COMPANY_UPI_NAME') ?? 'Pro Enroll'),
+        ));
+
+        return $v !== '' ? $v : 'Pro Enroll';
+    }
+
+    /**
+     * UPI deep link / QR payload for paying platform fee.
+     * Amount in paise → rupees with 2 decimals.
+     */
+    public function companyUpiPayUri(int $amountPaise, ?string $note = null): string
+    {
+        $rupees = max(0, $amountPaise) / 100;
+        $am = number_format($rupees, 2, '.', '');
+        $params = [
+            'pa' => $this->companyUpiId(),
+            'pn' => $this->companyUpiName(),
+            'am' => $am,
+            'cu' => 'INR',
+            'tn' => $note ?? 'Pro Enroll platform fee',
+        ];
+
+        return 'upi://pay?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+    }
+
     /** @return array<string, mixed> */
     public function publicPayload(): array
     {
@@ -91,6 +131,8 @@ final class PlatformSettingsRepository
             'hold_pro_after_free_limit' => $this->holdProAfterFreeLimit(),
             'visit_fee_min_paise' => $this->visitFeeMinPaise(),
             'visit_fee_max_paise' => $this->visitFeeMaxPaise(),
+            'company_upi_id' => $this->companyUpiId(),
+            'company_upi_name' => $this->companyUpiName(),
         ];
     }
 
