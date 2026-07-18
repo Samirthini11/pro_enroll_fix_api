@@ -10,13 +10,13 @@ use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Services\BookingRepository;
 
 /**
- * Flutter: EarningsTab
+ * Flutter: WalletTab + EarningsTab
  * GET  /v1/screens/home-earnings
- * POST /v1/screens/home-earnings  { "action": "mark_platform_fee_paid" }
+ * POST /v1/screens/home-earnings  { "action": "mark_platform_fee_paid", "utr": "..." }
  */
 final class HomeEarningsScreen extends ScreenHandler
 {
-    /** @return array<string, int> */
+    /** @return array<string, mixed> */
     private static function emptySummary(): array
     {
         return [
@@ -41,6 +41,7 @@ final class HomeEarningsScreen extends ScreenHandler
             Response::ok([
                 'screen' => 'home_earnings',
                 'summary' => self::emptySummary(),
+                'credit_history' => [],
                 'rating_avg' => 0,
                 'rating_count' => 0,
                 'jobs_completed' => 0,
@@ -49,6 +50,7 @@ final class HomeEarningsScreen extends ScreenHandler
         }
 
         $bookings = new BookingRepository();
+        $proId = (int) $pro['id'];
 
         if ($request->method === 'POST') {
             $action = (string) $request->input('action', '');
@@ -56,12 +58,32 @@ final class HomeEarningsScreen extends ScreenHandler
                 Response::fail('Unknown action', 422, 'validation');
                 return;
             }
-            $updated = $bookings->markPlatformFeePaidViaUpi((int) $pro['id']);
-            $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
+
+            $utr = trim((string) $request->input('utr', ''));
+            if ($utr === '') {
+                Response::fail('Enter UTR number after paying via UPI', 422, 'utr_required');
+                return;
+            }
+
+            try {
+                $updated = $bookings->markPlatformFeePaidViaUpi($proId, $utr);
+            } catch (\InvalidArgumentException $e) {
+                Response::fail($e->getMessage(), 422, 'validation');
+                return;
+            }
+
+            if ($updated < 1) {
+                Response::fail('No unpaid platform fee found', 400, 'nothing_to_pay');
+                return;
+            }
+
+            $summary = $bookings->earningsSummaryForProfessional($proId);
             Response::ok([
                 'screen' => 'home_earnings',
                 'marked_paid' => $updated,
+                'utr' => strtoupper(preg_replace('/\s+/', '', $utr) ?? $utr),
                 'summary' => $summary,
+                'credit_history' => $bookings->creditHistoryForProfessional($proId),
                 'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
                 'rating_count' => (int) ($pro['rating_count'] ?? 0),
                 'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
@@ -75,14 +97,17 @@ final class HomeEarningsScreen extends ScreenHandler
         }
 
         try {
-            $summary = $bookings->earningsSummaryForProfessional((int) $pro['id']);
+            $summary = $bookings->earningsSummaryForProfessional($proId);
+            $history = $bookings->creditHistoryForProfessional($proId);
         } catch (\Throwable) {
             $summary = self::emptySummary();
+            $history = [];
         }
 
         Response::ok([
             'screen' => 'home_earnings',
             'summary' => $summary,
+            'credit_history' => $history,
             'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
             'rating_count' => (int) ($pro['rating_count'] ?? 0),
             'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),

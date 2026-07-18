@@ -746,25 +746,129 @@ final class BookingRepository
         }
     }
 
-    /** Mark all unpaid platform fees as paid via company UPI. */
-    public function markPlatformFeePaidViaUpi(int $professionalId): int
+    /** Mark all unpaid platform fees as paid via company UPI (requires UTR). */
+    public function markPlatformFeePaidViaUpi(int $professionalId, string $utr): int
     {
+        $utr = strtoupper(trim($utr));
+        $utr = preg_replace('/\s+/', '', $utr) ?? '';
+        if (strlen($utr) < 8 || strlen($utr) > 64) {
+            throw new \InvalidArgumentException('UTR must be 8–64 characters');
+        }
+        if (!preg_match('/^[A-Z0-9]+$/', $utr)) {
+            throw new \InvalidArgumentException('UTR must be letters and numbers only');
+        }
+
         if (!$this->hasCommissionUpiPaidColumn()) {
             return 0;
         }
 
-        $stmt = $this->db->prepare(
-            "UPDATE service_bookings
-             SET commission_upi_paid_at = NOW(), updated_at = NOW()
-             WHERE professional_id = ?
-               AND status = 'completed'
-               AND COALESCE(commission_waived, 0) = 0
-               AND commission_paise > 0
-               AND commission_upi_paid_at IS NULL"
-        );
-        $stmt->execute([$professionalId]);
+        if ($this->hasCommissionUpiUtrColumn()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET commission_upi_paid_at = NOW(),
+                     commission_upi_utr = ?,
+                     updated_at = NOW()
+                 WHERE professional_id = ?
+                   AND status = 'completed'
+                   AND COALESCE(commission_waived, 0) = 0
+                   AND commission_paise > 0
+                   AND commission_upi_paid_at IS NULL"
+            );
+            $stmt->execute([$utr, $professionalId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET commission_upi_paid_at = NOW(), updated_at = NOW()
+                 WHERE professional_id = ?
+                   AND status = 'completed'
+                   AND COALESCE(commission_waived, 0) = 0
+                   AND commission_paise > 0
+                   AND commission_upi_paid_at IS NULL"
+            );
+            $stmt->execute([$professionalId]);
+        }
 
         return $stmt->rowCount();
+    }
+
+    /**
+     * Credit history rows for wallet screen (newest first).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function creditHistoryForProfessional(int $professionalId, int $limit = 50): array
+    {
+        $limit = max(1, min(100, $limit));
+        $amount = $this->earningsAmountExpression();
+        $hasUtr = $this->hasCommissionUpiUtrColumn();
+        $hasPaid = $this->hasCommissionUpiPaidColumn();
+
+        $utrSelect = $hasUtr ? 'commission_upi_utr' : 'NULL AS commission_upi_utr';
+        $paidSelect = $hasPaid ? 'commission_upi_paid_at' : 'NULL AS commission_upi_paid_at';
+
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT
+                    id,
+                    booking_code,
+                    category_code,
+                    visit_fee_paise,
+                    final_amount_paise,
+                    commission_paise,
+                    COALESCE(commission_waived, 0) AS commission_waived,
+                    ($amount) AS credit_paise,
+                    $paidSelect,
+                    $utrSelect,
+                    completed_at,
+                    created_at
+                 FROM service_bookings
+                 WHERE professional_id = ?
+                   AND status = 'completed'
+                   AND completed_at IS NOT NULL
+                 ORDER BY completed_at DESC
+                 LIMIT {$limit}"
+            );
+            $stmt->execute([$professionalId]);
+            $rows = $stmt->fetchAll() ?: [];
+        } catch (\Throwable) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $commission = (int) ($row['commission_paise'] ?? 0);
+            $waived = !empty($row['commission_waived']);
+            $paidAt = $row['commission_upi_paid_at'] ?? null;
+            $out[] = [
+                'id' => (string) $row['id'],
+                'booking_code' => (string) ($row['booking_code'] ?? ''),
+                'category_code' => (string) ($row['category_code'] ?? ''),
+                'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+                'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
+                    ? (int) $row['final_amount_paise'] : null,
+                'credit_paise' => (int) ($row['credit_paise'] ?? 0),
+                'commission_paise' => $commission,
+                'commission_waived' => $waived,
+                'platform_fee_paid' => $paidAt !== null && $paidAt !== '',
+                'commission_upi_utr' => $row['commission_upi_utr'] ?? null,
+                'commission_upi_paid_at' => $paidAt
+                    ? date(DATE_ATOM, strtotime((string) $paidAt))
+                    : null,
+                'completed_at' => !empty($row['completed_at'])
+                    ? date(DATE_ATOM, strtotime((string) $row['completed_at']))
+                    : null,
+                'label' => $waived || $commission <= 0
+                    ? 'Credit · free / no platform fee'
+                    : ($paidAt
+                        ? 'Credit · platform fee paid'
+                        : 'Credit · platform fee due'),
+            ];
+        }
+
+        return $out;
     }
 
     private function hasCommissionUpiPaidColumn(): bool
@@ -776,6 +880,23 @@ final class BookingRepository
 
         try {
             $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'commission_upi_paid_at'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
+    }
+
+    private function hasCommissionUpiUtrColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'commission_upi_utr'");
             $cached = $stmt !== false && (bool) $stmt->fetch();
         } catch (\Throwable) {
             $cached = false;
