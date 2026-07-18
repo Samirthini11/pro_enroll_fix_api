@@ -118,6 +118,7 @@ sudo systemctl reload apache2
 | http://98.93.105.128/pro_enroll_api/v1/screens/splash | JSON `"success": true` |
 | http://98.93.105.128/pro_enroll_api/v1/health/push | JSON `"fcm_http_v1_ready": true` |
 | Push test (after login) | `POST /v1/device/push-test` with Bearer token |
+| Android + iOS push | FCM sends both Android (`proconnect_alerts`) and APNs configs. iOS needs APNs Auth Key in Firebase Console |
 
 Quick test:
 

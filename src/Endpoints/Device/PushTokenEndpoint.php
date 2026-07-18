@@ -15,9 +15,15 @@ use ProEnroll\Api\Services\ProRepository;
 
 /**
  * POST /v1/device/push-token
- * Body: { "fcm_token", "platform"?: "android"|"ios", "role"?: "professional"|"customer" }
+ * Body: {
+ *   "fcm_token": "...",
+ *   "platform": "android"|"ios"|"web",
+ *   "role"?: "professional"|"customer",
+ *   "register_all_roles"?: true
+ * }
  *
- * Registers the same FCM token for every account tied to this phone (customer + pro when enrolled).
+ * Registers the FCM token for accounts tied to this phone (customer + pro when enrolled).
+ * Pass platform=ios for iPhone; platform=android for Android.
  */
 final class PushTokenEndpoint
 {

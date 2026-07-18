@@ -7,12 +7,21 @@ namespace ProEnroll\Api\Services;
 use Kreait\Firebase\Exception\Messaging\NotFound as FcmTokenNotFound;
 use Kreait\Firebase\Exception\MessagingException;
 use Kreait\Firebase\Messaging\AndroidConfig;
+use Kreait\Firebase\Messaging\ApnsConfig;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
 use ProEnroll\Api\Auth\FirebaseCredentials;
 
+/**
+ * FCM push for Android + iOS.
+ *
+ * Android channel_id: proconnect_alerts
+ * iOS: APNs high priority + sound (requires APNs key/cert in Firebase Console)
+ */
 final class PushNotificationService
 {
+    public const ANDROID_CHANNEL_ID = 'proconnect_alerts';
+
     public function isConfigured(): bool
     {
         return FirebaseCredentials::isAvailable();
@@ -44,6 +53,8 @@ final class PushNotificationService
 
         $messaging = FirebaseCredentials::messaging();
         $tokenRepo = new DeviceTokenRepository();
+        $androidConfig = $this->androidConfig();
+        $apnsConfig = $this->apnsConfig($title, $body);
         $sent = 0;
 
         foreach ($tokens as $token) {
@@ -51,16 +62,14 @@ final class PushNotificationService
                 $message = CloudMessage::withTarget('token', $token)
                     ->withNotification(Notification::create($title, $body))
                     ->withData($payload)
-                    ->withAndroidConfig(
-                        AndroidConfig::fromArray([
-                            'priority' => 'high',
-                            'notification' => [
-                                'channel_id' => 'proconnect_alerts',
-                                'sound' => 'default',
-                                'notification_priority' => 'PRIORITY_HIGH',
-                            ],
-                        ]),
-                    );
+                    ->withAndroidConfig($androidConfig)
+                    ->withApnsConfig($apnsConfig);
+
+                // Default sounds when available (Kreait 7+)
+                if (method_exists($message, 'withDefaultSounds')) {
+                    $message = $message->withDefaultSounds();
+                }
+
                 $messaging->send($message);
                 $sent++;
             } catch (\Throwable $e) {
@@ -74,6 +83,42 @@ final class PushNotificationService
         }
 
         return $sent;
+    }
+
+    private function androidConfig(): AndroidConfig
+    {
+        return AndroidConfig::fromArray([
+            'priority' => 'high',
+            'notification' => [
+                'channel_id' => self::ANDROID_CHANNEL_ID,
+                'sound' => 'default',
+                'default_sound' => true,
+                'default_vibrate_timings' => true,
+                'notification_priority' => 'PRIORITY_HIGH',
+            ],
+        ]);
+    }
+
+    private function apnsConfig(string $title, string $body): ApnsConfig
+    {
+        return ApnsConfig::fromArray([
+            'headers' => [
+                'apns-priority' => '10',
+                'apns-push-type' => 'alert',
+            ],
+            'payload' => [
+                'aps' => [
+                    'alert' => [
+                        'title' => $title,
+                        'body' => $body,
+                    ],
+                    'sound' => 'default',
+                    'badge' => 1,
+                    'content-available' => 1,
+                    'mutable-content' => 1,
+                ],
+            ],
+        ]);
     }
 
     private function isInvalidFcmToken(\Throwable $e): bool

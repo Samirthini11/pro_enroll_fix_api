@@ -39,6 +39,8 @@ final class PushHealthEndpoint
                 'step_2' => 'Upload JSON to config/firebase-service-account.json on VPS',
                 'step_3' => 'Set FIREBASE_CREDENTIALS=config/firebase-service-account.json in .env',
                 'step_4' => 'Run composer install && composer dump-autoload -o',
+                'android' => 'App must create notification channel id: proconnect_alerts',
+                'ios' => 'Firebase Console → Project settings → Cloud Messaging → Apple app config → upload APNs key (.p8)',
                 'not_sufficient' => ['google-services.json', 'Android API key', 'FCM device token alone'],
             ],
         ], $diag['fcm_http_v1_ready'] ? 200 : 503);
