@@ -51,7 +51,8 @@ final class OtpService
         ]);
 
         $delivery = strtolower((string) Config::get('OTP_DELIVERY', 'mail'));
-        if ($delivery === 'mail' || Config::bool('APP_DEBUG', false)) {
+        // Only block on mail when delivery is explicitly mail — never because APP_DEBUG.
+        if ($delivery === 'mail') {
             $this->deliverOtpMail($phone, $otp, $ttl);
         }
 
