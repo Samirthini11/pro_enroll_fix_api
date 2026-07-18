@@ -456,11 +456,12 @@ final class BookingRepository
 
     public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
     {
+        // awaiting_payment / completed are finished from the pro side — not an active job.
         $sql = "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
                 FROM service_bookings b
                 INNER JOIN customers c ON c.id = b.customer_id
                 WHERE b.professional_id = ?
-                  AND b.status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')";
+                  AND b.status IN ('en_route', 'arrived', 'in_progress')";
         $params = [$professionalId];
         if ($bookingId !== null) {
             $sql .= ' AND b.id = ?';
@@ -482,7 +483,7 @@ final class BookingRepository
             "UPDATE service_bookings
              SET status = ?, updated_at = NOW()
              WHERE id = ? AND professional_id = ?
-               AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+               AND status IN ('en_route', 'arrived', 'in_progress')"
         );
         $stmt->execute([$dbStatus, $bookingId, $professionalId]);
 
@@ -498,7 +499,7 @@ final class BookingRepository
                  SET status = 'awaiting_payment', updated_at = NOW(),
                      final_amount_paise = ?
                  WHERE id = ? AND professional_id = ?
-                   AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+                   AND status IN ('en_route', 'arrived', 'in_progress')"
             );
             $stmt->execute([$finalAmountPaise, $bookingId, $professionalId]);
         } else {
@@ -506,7 +507,7 @@ final class BookingRepository
                 "UPDATE service_bookings
                  SET status = 'awaiting_payment', updated_at = NOW()
                  WHERE id = ? AND professional_id = ?
-                   AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')"
+                   AND status IN ('en_route', 'arrived', 'in_progress')"
             );
             $stmt->execute([$bookingId, $professionalId]);
         }
