@@ -148,25 +148,10 @@ final class JobActiveScreen extends ScreenHandler
 
 
         if ($request->method === 'POST') {
-
-            $amount = (int) $request->input('final_amount_paise', 0);
-
-            if ($amount < 100) {
-
-                Response::fail('final_amount_paise required', 422);
-
-                return;
-
-            }
-
-
-
-            if (!$bookings->completeActiveJob($bookingId, $proId, $amount)) {
-
+            // Temporary: visit fee only — final amount entry disabled for professionals.
+            if (!$bookings->completeActiveJob($bookingId, $proId, null)) {
                 Response::fail('Could not complete job', 400);
-
                 return;
-
             }
 
             $completed = $bookings->findById($bookingId);
@@ -180,23 +165,15 @@ final class JobActiveScreen extends ScreenHandler
             $row = $completed ?? $bookings->findById($bookingId);
 
             Response::ok([
-
                 'screen' => 'job_active',
-
                 'status' => 'completed',
-
-                'final_amount_paise' => $amount,
-
+                'final_amount_paise' => null,
                 'payment_due' => true,
-
                 'active_job' => $row !== null
                     ? $bookings->activeJobPayload($row, $proLat, $proLng)
                     : null,
-
             ]);
-
             return;
-
         }
 
 

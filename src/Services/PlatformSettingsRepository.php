@@ -64,6 +64,21 @@ final class PlatformSettingsRepository
         return max(100, $v);
     }
 
+    /**
+     * Minimum net wallet (credits − unpaid platform fee) allowed to accept jobs.
+     * Default −₹200 (−20000 paise). Set in platform_settings / .env.
+     */
+    public function walletMinAcceptPaise(): int
+    {
+        $v = (int) $this->get(
+            'wallet_min_accept_paise',
+            (string) (Config::get('WALLET_MIN_ACCEPT_PAISE') ?? '-20000'),
+        );
+
+        // Clamp to a sane range (−₹10,000 … ₹0).
+        return max(-1000000, min(0, $v));
+    }
+
     /** Min visit fee in paise. Default ₹50 (5000). */
     public function visitFeeMinPaise(): int
     {
@@ -131,6 +146,7 @@ final class PlatformSettingsRepository
             'hold_pro_after_free_limit' => $this->holdProAfterFreeLimit(),
             'visit_fee_min_paise' => $this->visitFeeMinPaise(),
             'visit_fee_max_paise' => $this->visitFeeMaxPaise(),
+            'wallet_min_accept_paise' => $this->walletMinAcceptPaise(),
             'company_upi_id' => $this->companyUpiId(),
             'company_upi_name' => $this->companyUpiName(),
         ];

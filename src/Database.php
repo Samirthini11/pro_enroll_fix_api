@@ -46,6 +46,8 @@ final class Database
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             ]);
+            // Store / read DATETIME in India Standard Time.
+            self::$pdo->exec("SET time_zone = '+05:30'");
         } catch (PDOException $e) {
             throw new \RuntimeException('Database connection failed: ' . $e->getMessage(), 0, $e);
         }

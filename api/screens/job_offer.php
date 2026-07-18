@@ -121,6 +121,12 @@ final class JobOfferScreen extends ScreenHandler
 
         if ($request->method === 'POST' && str_ends_with($request->path, '/accept')) {
 
+            $gate = $bookings->acceptWalletGate($proId);
+            if (!$gate['ok']) {
+                Response::fail($gate['message'], 403, 'wallet_limit');
+                return;
+            }
+
             $activeRow = $bookings->acceptOffer($bookingId, $proId);
 
             if ($activeRow === null) {

@@ -66,7 +66,7 @@ final class HomeEarningsScreen extends ScreenHandler
             }
 
             try {
-                $updated = $bookings->markPlatformFeePaidViaUpi($proId, $utr);
+                $updated = $bookings->markPlatformFeePaidViaUpiAndSync($proId, $utr);
             } catch (\InvalidArgumentException $e) {
                 Response::fail($e->getMessage(), 422, 'validation');
                 return;
@@ -98,6 +98,9 @@ final class HomeEarningsScreen extends ScreenHandler
 
         try {
             $summary = $bookings->earningsSummaryForProfessional($proId);
+            // Refresh hold from current wallet overdraft (e.g. after deploy).
+            $bookings->syncListingHoldForWallet($proId);
+            $pro = $this->proRow($request) ?? $pro;
             $history = $bookings->creditHistoryForProfessional($proId);
         } catch (\Throwable) {
             $summary = self::emptySummary();

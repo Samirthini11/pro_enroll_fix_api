@@ -489,6 +489,19 @@ final class ProRepository
         }
     }
 
+    /** Clear listing hold (does not force online). */
+    public function releaseListing(int $professionalId): void
+    {
+        if (!$this->hasListingHeldColumn()) {
+            return;
+        }
+        $this->db->prepare(
+            'UPDATE professionals
+             SET listing_held = 0, updated_at = NOW()
+             WHERE id = ? AND listing_held = 1'
+        )->execute([$professionalId]);
+    }
+
     public function isListingHeld(int $professionalId): bool
     {
         if (!$this->hasListingHeldColumn()) {

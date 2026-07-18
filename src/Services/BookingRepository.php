@@ -6,6 +6,7 @@ namespace ProEnroll\Api\Services;
 
 use PDO;
 use ProEnroll\Api\Database;
+use ProEnroll\Api\IstTime;
 use ProEnroll\Api\ReferenceData;
 
 final class BookingRepository
@@ -278,7 +279,7 @@ final class BookingRepository
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
             'visit_fee_paid' => (bool) ($row['visit_fee_paid'] ?? false),
             'visit_fee_paid_at' => !empty($row['visit_fee_paid_at'])
-                ? date(DATE_ATOM, strtotime((string) $row['visit_fee_paid_at']))
+                ? IstTime::format((string) $row['visit_fee_paid_at'])
                 : null,
             'visit_fee_payment_method' => $row['visit_fee_payment_method'] ?? null,
             'final_amount_paise' => isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
@@ -286,11 +287,14 @@ final class BookingRepository
             'total_due_paise' => self::totalDuePaise($row),
             // Never expose platform commission / pro credit to customers.
             'status_label' => self::statusLabel((string) $row['status']),
-            'scheduled_at' => date(DATE_ATOM, strtotime($row['scheduled_at'])),
-            'completed_at' => $row['completed_at']
-                ? date(DATE_ATOM, strtotime($row['completed_at']))
+            'scheduled_at' => IstTime::format((string) $row['scheduled_at']),
+            'accepted_at' => !empty($row['accepted_at'])
+                ? IstTime::format((string) $row['accepted_at'])
                 : null,
-            'created_at' => date(DATE_ATOM, strtotime($row['created_at'])),
+            'completed_at' => $row['completed_at']
+                ? IstTime::format((string) $row['completed_at'])
+                : null,
+            'created_at' => IstTime::format((string) $row['created_at']),
             'professional' => [
                 'id' => (string) $row['professional_id'],
                 'full_name' => $row['pro_name'],
@@ -429,17 +433,98 @@ final class BookingRepository
 
     public function acceptOffer(int $bookingId, int $professionalId): ?array
     {
-        $stmt = $this->db->prepare(
-            "UPDATE service_bookings
-             SET status = 'en_route', updated_at = NOW()
-             WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
-        );
+        if ($this->hasAcceptedAtColumn()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'en_route', accepted_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'en_route', updated_at = NOW()
+                 WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
+            );
+        }
         $stmt->execute([$bookingId, $professionalId]);
         if ($stmt->rowCount() === 0) {
             return null;
         }
 
         return $this->findActiveForProfessional($professionalId, $bookingId);
+    }
+
+    /**
+     * Net wallet = unpaid credits − unpaid platform fee.
+     * Pros may accept while net >= wallet_min_accept_paise (default −₹200).
+     */
+    public function netWalletPaise(int $professionalId): int
+    {
+        $wallet = $this->walletBalancePaiseOnly($professionalId);
+        $feeDue = $this->platformFeeDuePaise($professionalId);
+
+        return $wallet - $feeDue;
+    }
+
+    private function walletBalancePaiseOnly(int $professionalId): int
+    {
+        $amount = $this->earningsAmountExpression();
+        $walletExpr = $this->walletBalanceExpression($amount);
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT COALESCE(SUM($walletExpr), 0) AS wallet_balance_paise
+                 FROM service_bookings
+                 WHERE professional_id = ?
+                   AND status = 'completed'
+                   AND completed_at IS NOT NULL"
+            );
+            $stmt->execute([$professionalId]);
+
+            return (int) $stmt->fetchColumn();
+        } catch (\Throwable) {
+            return 0;
+        }
+    }
+
+    public function canProfessionalAccept(int $professionalId): bool
+    {
+        $settings = new PlatformSettingsRepository();
+        $min = $settings->walletMinAcceptPaise();
+
+        return $this->netWalletPaise($professionalId) >= $min;
+    }
+
+    /** Hold / release listing based on wallet overdraft limit (not free-tier alone). */
+    public function syncListingHoldForWallet(int $professionalId): void
+    {
+        $pros = new ProRepository();
+        if ($this->canProfessionalAccept($professionalId)) {
+            $pros->releaseListing($professionalId);
+        } else {
+            $pros->holdListing($professionalId);
+        }
+    }
+
+    /** @return array{ok: bool, net_paise: int, min_paise: int, message: string} */
+    public function acceptWalletGate(int $professionalId): array
+    {
+        $settings = new PlatformSettingsRepository();
+        $min = $settings->walletMinAcceptPaise();
+        $net = $this->netWalletPaise($professionalId);
+        $ok = $net >= $min;
+        $limitRupees = abs((int) round($min / 100));
+
+        return [
+            'ok' => $ok,
+            'net_paise' => $net,
+            'min_paise' => $min,
+            'message' => $ok
+                ? 'OK'
+                : sprintf(
+                    'Wallet overdraft limit reached (₹%d). Pay platform fee in Wallet to accept more jobs.',
+                    $limitRupees
+                ),
+        ];
     }
 
     public function rejectOffer(int $bookingId, int $professionalId): bool
@@ -639,10 +724,8 @@ final class BookingRepository
             $pros->incrementFreeBookingsUsed($professionalId);
         }
 
-        $freeRemaining = max(0, $freeLimit - $this->freeBookingsUsed($professionalId));
-        if ($freeRemaining === 0 && $settings->holdProAfterFreeLimit()) {
-            $pros->holdListing($professionalId);
-        }
+        // Hold only when net wallet drops below configured floor (default −₹200).
+        $this->syncListingHoldForWallet($professionalId);
     }
 
     public function completedJobsCount(int $professionalId): int
@@ -692,6 +775,9 @@ final class BookingRepository
             'free_bookings_remaining' => $remaining,
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
             'platform_fee_due_paise' => $feeDue,
+            'wallet_net_paise' => $this->netWalletPaise($professionalId),
+            'wallet_min_accept_paise' => $settings->walletMinAcceptPaise(),
+            'can_accept_jobs' => $this->canProfessionalAccept($professionalId),
             'company_upi_pay_uri' => $feeDue > 0
                 ? $settings->companyUpiPayUri($feeDue, 'Pro Enroll platform fee')
                 : $settings->companyUpiPayUri(0, 'Pro Enroll platform fee'),
@@ -792,6 +878,19 @@ final class BookingRepository
     }
 
     /**
+     * After marking fees paid, refresh listing hold from net wallet.
+     */
+    public function markPlatformFeePaidViaUpiAndSync(int $professionalId, string $utr): int
+    {
+        $n = $this->markPlatformFeePaidViaUpi($professionalId, $utr);
+        if ($n > 0) {
+            $this->syncListingHoldForWallet($professionalId);
+        }
+
+        return $n;
+    }
+
+    /**
      * Credit history rows for wallet screen (newest first).
      *
      * @return list<array<string, mixed>>
@@ -855,10 +954,10 @@ final class BookingRepository
                 'platform_fee_paid' => $paidAt !== null && $paidAt !== '',
                 'commission_upi_utr' => $row['commission_upi_utr'] ?? null,
                 'commission_upi_paid_at' => $paidAt
-                    ? date(DATE_ATOM, strtotime((string) $paidAt))
+                    ? IstTime::format((string) $paidAt)
                     : null,
                 'completed_at' => !empty($row['completed_at'])
-                    ? date(DATE_ATOM, strtotime((string) $row['completed_at']))
+                    ? IstTime::format((string) $row['completed_at'])
                     : null,
                 'label' => $waived || $commission <= 0
                     ? 'Credit · free / no platform fee'
@@ -923,8 +1022,9 @@ final class BookingRepository
             'customer_area_name' => $row['address_text'],
             'distance_km' => self::distanceKm($row, $proLat, $proLng),
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
-            'preferred_time' => date(DATE_ATOM, $scheduled),
-            'expires_at' => date(DATE_ATOM, $created + 3600),
+            'preferred_time' => IstTime::formatTs($scheduled),
+            'expires_at' => IstTime::formatTs($created + 3600),
+            'created_at' => IstTime::formatTs($created),
             'commission_preview' => $this->commissionPreviewForPro((int) $row['professional_id'], (int) $row['visit_fee_paise']),
         ];
     }
@@ -989,6 +1089,12 @@ final class BookingRepository
             'pro_credit_paise' => isset($row['pro_credit_paise']) && $row['pro_credit_paise'] !== null
                 ? (int) $row['pro_credit_paise'] : null,
             'commission_paise' => (int) ($row['commission_paise'] ?? 0),
+            'accepted_at' => !empty($row['accepted_at'])
+                ? IstTime::format((string) $row['accepted_at'])
+                : null,
+            'updated_at' => !empty($row['updated_at'])
+                ? IstTime::format((string) $row['updated_at'])
+                : null,
         ];
     }
 
@@ -1231,5 +1337,22 @@ final class BookingRepository
         }
 
         return self::$hasFinalAmountColumn;
+    }
+
+    private function hasAcceptedAtColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'accepted_at'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
     }
 }

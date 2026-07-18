@@ -36,6 +36,7 @@ if (!is_readable($root . '/vendor/autoload.php')) {
 require $root . '/vendor/autoload.php';
 
 Config::load($root);
+\ProEnroll\Api\IstTime::bootstrap();
 
 try {
     $request = Request::fromGlobals();
