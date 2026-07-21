@@ -223,6 +223,7 @@ final class PushNotificationService
                 'type' => 'visit_fee_paid',
                 'booking_id' => (string) ($booking['id'] ?? ''),
                 'route' => '/home',
+                'tab' => '1',
             ],
         );
     }

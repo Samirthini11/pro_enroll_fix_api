@@ -69,6 +69,17 @@ final class BookingsEndpoint
                 }
             }
 
+            // Prefer visit at least 30 minutes from now (IST server clock).
+            $minTs = time() + 30 * 60;
+            if ($scheduledTs < $minTs) {
+                Response::fail(
+                    'scheduled_at must be at least 30 minutes from now',
+                    422,
+                    'scheduled_too_soon',
+                );
+                return;
+            }
+
             $pros = new ProRepository();
             $pro = $pros->findById($proId);
             if ($pro === null) {
@@ -83,6 +94,15 @@ final class BookingsEndpoint
                 );
             } catch (\InvalidArgumentException $e) {
                 Response::fail($e->getMessage(), 422, 'validation');
+                return;
+            }
+
+            if ($addressLat === null || $addressLng === null) {
+                Response::fail(
+                    'Confirm service location on the map (address_lat / address_lng required)',
+                    422,
+                    'location_required',
+                );
                 return;
             }
 
