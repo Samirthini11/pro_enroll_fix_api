@@ -370,7 +370,7 @@ final class BookingRepository
     private static function trackingPayload(array $row): ?array
     {
         $status = (string) ($row['status'] ?? '');
-        if (!in_array($status, ['en_route', 'arrived', 'in_progress'], true)) {
+        if (!in_array($status, ['en_route', 'arrived'], true)) {
             return null;
         }
 
@@ -1253,6 +1253,7 @@ final class BookingRepository
     {
         return match ($api) {
             'on_the_way' => 'en_route',
+            'arrived' => 'arrived',
             'in_progress' => 'in_progress',
             'completed' => 'completed',
             'cancelled' => 'cancelled',
@@ -1264,6 +1265,7 @@ final class BookingRepository
     {
         return match ($db) {
             'en_route' => 'on_the_way',
+            'arrived' => 'arrived',
             'in_progress' => 'in_progress',
             // Pro finished work; show completed UI while customer pays visit fee.
             'awaiting_payment' => 'completed',
