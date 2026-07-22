@@ -36,4 +36,31 @@ final class JwtTokenMiddleware
 
         return true;
     }
+
+    /**
+     * Attach auth user when a valid Bearer token is present; never fails the request.
+     */
+    public static function optional(Request $request): bool
+    {
+        if ($request->bearerToken === null || $request->bearerToken === '') {
+            return false;
+        }
+
+        try {
+            $request->authUser = JwtAuth::verify($request->bearerToken);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        $jti = $request->authUser['jti'] ?? null;
+        if ($jti !== null && $jti !== '') {
+            $auth = new AuthRepository();
+            if ($auth->findActiveSession($jti) === null) {
+                $request->authUser = [];
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

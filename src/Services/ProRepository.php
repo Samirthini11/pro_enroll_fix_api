@@ -279,6 +279,7 @@ final class ProRepository
         ?string $query = null,
         ?float $customerLat = null,
         ?float $customerLng = null,
+        ?int $excludeCustomerId = null,
     ): array {
         $useGeo = $customerLat !== null && $customerLng !== null;
 
@@ -296,12 +297,29 @@ final class ProRepository
               AND p.last_seen_at >= (NOW() - INTERVAL {$ttl} MINUTE)";
         }
 
+        // Hide pros this customer already has an in-process booking with.
+        $busyProFilter = '';
+        $params = [];
+        if ($excludeCustomerId !== null && $excludeCustomerId > 0) {
+            $busyProFilter = " AND p.id NOT IN (
+                SELECT DISTINCT sb.professional_id
+                FROM service_bookings sb
+                WHERE sb.customer_id = ?
+                  AND sb.status IN (
+                    'confirmed', 'en_route', 'arrived', 'in_progress', 'awaiting_payment'
+                  )
+            )";
+            $params[] = $excludeCustomerId;
+        }
+
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
                   AND p.is_available = 1
-                  AND p.kyc_status = \'verified\'' . $heldFilter . $presenceFilter;
-        $params = [];
+                  AND p.kyc_status = \'verified\''
+            . $heldFilter
+            . $presenceFilter
+            . $busyProFilter;
 
         if (!$useGeo) {
             $sql .= ' AND p.city_id = ?';

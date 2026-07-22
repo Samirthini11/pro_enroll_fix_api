@@ -6,7 +6,9 @@ namespace ProEnroll\Api\Endpoints\Customer;
 
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
+use ProEnroll\Api\Middleware\JwtTokenMiddleware;
 use ProEnroll\Api\ReferenceData;
+use ProEnroll\Api\Services\AuthService;
 use ProEnroll\Api\Services\ProRepository;
 
 /** GET /v1/customer/pros/search?city_id=1&category_code=ac&q=&lat=&lng= */
@@ -35,8 +37,22 @@ final class ProsSearchEndpoint
         $lat = is_numeric($rawLat) ? (float) $rawLat : null;
         $lng = is_numeric($rawLng) ? (float) $rawLng : null;
 
+        // Optional auth: when logged-in customer, hide pros they already booked (in process).
+        $excludeCustomerId = null;
+        if (JwtTokenMiddleware::optional($request)) {
+            $auth = new AuthService();
+            $excludeCustomerId = $auth->resolveCustomerId($request);
+        }
+
         $pros = new ProRepository();
-        $results = $pros->searchForCustomer($cityId, $category, $q, $lat, $lng);
+        $results = $pros->searchForCustomer(
+            $cityId,
+            $category,
+            $q,
+            $lat,
+            $lng,
+            $excludeCustomerId,
+        );
 
         foreach ($results as &$r) {
             foreach (ReferenceData::categories() as $c) {
