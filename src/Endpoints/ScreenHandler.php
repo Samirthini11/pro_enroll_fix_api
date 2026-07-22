@@ -52,9 +52,6 @@ abstract class ScreenHandler
     /** @param array<string, mixed> $pro */
     protected function proCoords(array $pro): array
     {
-        $lat = $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
-        $lng = $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
-
-        return [$lat, $lng];
+        return ProRepository::resolveCoords($pro);
     }
 }

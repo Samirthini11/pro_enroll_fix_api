@@ -109,40 +109,64 @@ final class JobActiveScreen extends ScreenHandler
 
         if ($request->method === 'PUT') {
 
-            $status = (string) $request->input('status', 'on_the_way');
+            $status = $request->input('status');
+            $latRaw = $request->input('lat');
+            $lngRaw = $request->input('lng');
 
-            if (!$bookings->updateActiveJobStatus($bookingId, $proId, $status)) {
-
-                Response::fail('Could not update job status', 400);
-
-                return;
-
+            $locationUpdated = false;
+            if ($latRaw !== null && $lngRaw !== null && $latRaw !== '' && $lngRaw !== '') {
+                try {
+                    [$lat, $lng] = BookingRepository::parseGeoInput($latRaw, $lngRaw);
+                } catch (\InvalidArgumentException $e) {
+                    Response::fail($e->getMessage(), 422, 'validation');
+                    return;
+                }
+                if ($lat !== null && $lng !== null) {
+                    $locationUpdated = $bookings->updateProLocationForActiveJob(
+                        $bookingId,
+                        $proId,
+                        $lat,
+                        $lng,
+                    );
+                }
             }
 
+            $statusUpdated = false;
+            if ($status !== null && $status !== '') {
+                $statusUpdated = $bookings->updateActiveJobStatus(
+                    $bookingId,
+                    $proId,
+                    (string) $status,
+                );
+                if (!$statusUpdated && !$locationUpdated) {
+                    Response::fail('Could not update job status', 400);
+                    return;
+                }
 
+                $row = $bookings->findActiveForProfessional($proId, $bookingId);
+                if ($row !== null) {
+                    BookingPushNotifier::statusForCustomer($row, (string) $status, $pro);
+                }
+            } elseif (!$locationUpdated) {
+                Response::fail('No valid update (status or lat/lng required)', 422, 'validation');
+                return;
+            }
 
+            $pro = $this->pros->findById($proId) ?? $pro;
+            [$proLat, $proLng] = $this->proCoords($pro);
             $row = $bookings->findActiveForProfessional($proId, $bookingId);
 
-            if ($row !== null) {
-                BookingPushNotifier::statusForCustomer($row, $status, $pro);
-            }
-
             Response::ok([
-
                 'screen' => 'job_active',
-
-                'status' => $status,
-
+                'status' => $status !== null && $status !== ''
+                    ? (string) $status
+                    : ($row !== null ? $bookings->activeJobPayload($row, $proLat, $proLng)['status'] ?? 'on_the_way' : 'on_the_way'),
                 'active_job' => $row === null
-
                     ? null
-
                     : $bookings->activeJobPayload($row, $proLat, $proLng),
-
             ]);
 
             return;
-
         }
 
 

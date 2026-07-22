@@ -129,6 +129,9 @@ final class BookingRepository
             'SELECT b.*, p.full_name AS pro_name, p.phone_e164 AS pro_phone,
                     p.rating_avg AS pro_rating_avg, p.rating_count AS pro_rating_count,
                     p.kyc_status AS pro_kyc_status,
+                    p.home_lat AS pro_home_lat, p.home_lng AS pro_home_lng,
+                    p.last_lat AS pro_last_lat, p.last_lng AS pro_last_lng,
+                    p.last_location_at AS pro_last_location_at,
                     c.full_name AS customer_name, c.phone_e164 AS customer_phone
              FROM service_bookings b
              INNER JOIN professionals p ON p.id = b.professional_id
@@ -147,6 +150,45 @@ final class BookingRepository
             return null;
         }
         return $row;
+    }
+
+    /** @var list<string> Statuses that block a new booking for the same pro + service. */
+    private const ACTIVE_CUSTOMER_BOOKING_STATUSES = [
+        'confirmed',
+        'en_route',
+        'arrived',
+        'in_progress',
+        'awaiting_payment',
+    ];
+
+    /**
+     * Returns an in-process booking for the same customer, professional, and category, if any.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function findActiveForCustomerProCategory(
+        int $customerId,
+        int $professionalId,
+        string $categoryCode,
+    ): ?array {
+        $placeholders = implode(', ', array_fill(0, count(self::ACTIVE_CUSTOMER_BOOKING_STATUSES), '?'));
+        $stmt = $this->db->prepare(
+            "SELECT b.*
+             FROM service_bookings b
+             WHERE b.customer_id = ?
+               AND b.professional_id = ?
+               AND b.category_code = ?
+               AND b.status IN ($placeholders)
+             ORDER BY b.created_at DESC
+             LIMIT 1"
+        );
+        $stmt->execute(array_merge(
+            [$customerId, $professionalId, $categoryCode],
+            self::ACTIVE_CUSTOMER_BOOKING_STATUSES,
+        ));
+        $row = $stmt->fetch();
+
+        return $row !== false ? $row : null;
     }
 
     /** @return list<array<string, mixed>> */
@@ -315,7 +357,72 @@ final class BookingRepository
                 'en_route', 'arrived', 'in_progress', 'awaiting_payment',
             ], true),
             'can_pay_visit_fee' => empty($row['visit_fee_paid']) && ($row['status'] ?? '') === 'awaiting_payment',
+            'tracking' => self::trackingPayload($row),
         ];
+    }
+
+    /**
+     * Live technician location + ETA for customer while job is in progress.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>|null
+     */
+    private static function trackingPayload(array $row): ?array
+    {
+        $status = (string) ($row['status'] ?? '');
+        if (!in_array($status, ['en_route', 'arrived', 'in_progress'], true)) {
+            return null;
+        }
+
+        $pro = [
+            'home_lat' => $row['pro_home_lat'] ?? null,
+            'home_lng' => $row['pro_home_lng'] ?? null,
+            'last_lat' => $row['pro_last_lat'] ?? null,
+            'last_lng' => $row['pro_last_lng'] ?? null,
+            'last_location_at' => $row['pro_last_location_at'] ?? null,
+        ];
+        [$proLat, $proLng] = ProRepository::resolveCoords($pro);
+        if ($proLat === null || $proLng === null) {
+            return null;
+        }
+
+        $distanceKm = self::distanceKm($row, $proLat, $proLng);
+        $updatedAt = $pro['last_location_at'] ?? ($row['updated_at'] ?? null);
+
+        return [
+            'pro_lat' => $proLat,
+            'pro_lng' => $proLng,
+            'distance_km' => $distanceKm,
+            'eta_minutes' => ProRepository::etaMinutesFromDistanceKm($distanceKm),
+            'updated_at' => $updatedAt !== null ? IstTime::format((string) $updatedAt) : null,
+        ];
+    }
+
+    public function updateProLocationForActiveJob(
+        int $bookingId,
+        int $professionalId,
+        float $lat,
+        float $lng,
+    ): bool {
+        $active = $this->findActiveForProfessional($professionalId, $bookingId);
+        if ($active === null) {
+            return false;
+        }
+
+        if (!in_array((string) $active['status'], ['en_route', 'arrived', 'in_progress'], true)) {
+            return false;
+        }
+
+        $pros = new ProRepository();
+        if (!$pros->updateLastLocation($professionalId, $lat, $lng)) {
+            return false;
+        }
+
+        $this->db->prepare(
+            'UPDATE service_bookings SET updated_at = NOW() WHERE id = ? AND professional_id = ?'
+        )->execute([$bookingId, $professionalId]);
+
+        return true;
     }
 
     /** @param array<string, mixed> $row */
@@ -564,11 +671,19 @@ final class BookingRepository
     public function updateActiveJobStatus(int $bookingId, int $professionalId, string $apiStatus): bool
     {
         $dbStatus = self::apiStatusToDb($apiStatus);
+        $current = $this->findActiveForProfessional($professionalId, $bookingId);
+        if ($current === null) {
+            return false;
+        }
+        if ((string) $current['status'] === $dbStatus) {
+            return true;
+        }
+
         $stmt = $this->db->prepare(
             "UPDATE service_bookings
              SET status = ?, updated_at = NOW()
              WHERE id = ? AND professional_id = ?
-               AND status IN ('en_route', 'arrived', 'in_progress')"
+               AND status IN ('en_route', 'arrived', 'in_progress', 'confirmed')"
         );
         $stmt->execute([$dbStatus, $bookingId, $professionalId]);
 

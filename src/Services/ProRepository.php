@@ -535,4 +535,74 @@ final class ProRepository
             return false;
         }
     }
+
+    /** @var bool|null */
+    private static ?bool $hasLastLocationColumns = null;
+
+    public function hasLastLocationColumns(): bool
+    {
+        if (self::$hasLastLocationColumns !== null) {
+            return self::$hasLastLocationColumns;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'last_lat'");
+            self::$hasLastLocationColumns = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasLastLocationColumns = false;
+        }
+
+        return self::$hasLastLocationColumns;
+    }
+
+    public function updateLastLocation(int $professionalId, float $lat, float $lng): bool
+    {
+        if (!$this->hasLastLocationColumns()) {
+            return false;
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE professionals
+             SET last_lat = ?, last_lng = ?, last_location_at = NOW(), updated_at = NOW()
+             WHERE id = ?'
+        );
+        $stmt->execute([$lat, $lng, $professionalId]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Prefer fresh live GPS; fall back to home base.
+     *
+     * @param array<string, mixed> $pro
+     * @return array{0: ?float, 1: ?float}
+     */
+    public static function resolveCoords(array $pro, int $maxAgeSeconds = 600): array
+    {
+        $lastLat = isset($pro['last_lat']) && $pro['last_lat'] !== null ? (float) $pro['last_lat'] : null;
+        $lastLng = isset($pro['last_lng']) && $pro['last_lng'] !== null ? (float) $pro['last_lng'] : null;
+        $lastAt = $pro['last_location_at'] ?? null;
+
+        if ($lastLat !== null && $lastLng !== null && $lastAt !== null) {
+            $age = time() - strtotime((string) $lastAt);
+            if ($age >= 0 && $age <= $maxAgeSeconds) {
+                return [$lastLat, $lastLng];
+            }
+        }
+
+        $homeLat = isset($pro['home_lat']) && $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
+        $homeLng = isset($pro['home_lng']) && $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
+
+        return [$homeLat, $homeLng];
+    }
+
+    /** Rough ETA in minutes from distance (urban ~25 km/h). */
+    public static function etaMinutesFromDistanceKm(float $distanceKm): int
+    {
+        if ($distanceKm <= 0.1) {
+            return 5;
+        }
+
+        return max(5, (int) round(($distanceKm / 25.0) * 60.0));
+    }
 }

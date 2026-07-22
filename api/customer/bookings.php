@@ -114,6 +114,16 @@ final class BookingsEndpoint
                 return;
             }
 
+            $existing = $bookings->findActiveForCustomerProCategory($customerId, $proId, $category);
+            if ($existing !== null) {
+                Response::fail(
+                    'You already have an active booking with this professional for this service. Complete or cancel it before booking again.',
+                    409,
+                    'booking_in_progress',
+                );
+                return;
+            }
+
             // Visit fee is collected after work is completed — not at booking time.
             $row = $bookings->create([
                 'customer_id' => $customerId,
