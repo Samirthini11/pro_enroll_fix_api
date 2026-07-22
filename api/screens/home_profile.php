@@ -25,6 +25,8 @@ final class HomeProfileScreen extends ScreenHandler
         $this->ensurePro($request);
 
         if ($request->method === 'GET') {
+            // Presence heartbeat when Jobs screen refreshes while online.
+            $this->pros->touchPresence($uid);
             Response::ok([
                 'screen' => 'home_profile',
                 'profile' => $this->pros->profilePayload($uid),
@@ -52,7 +54,26 @@ final class HomeProfileScreen extends ScreenHandler
                 }
                 $fields['is_available'] = $wantOnline ? 1 : 0;
             }
-            $this->pros->updateProfile($uid, $fields);
+
+            // Presence heartbeat while online (keeps pro in customer search).
+            $heartbeat = !empty($request->body['heartbeat'])
+                || !empty($request->body['presence']);
+            if ($heartbeat && $fields === []) {
+                $this->pros->touchPresence($uid);
+                Response::ok([
+                    'screen' => 'home_profile',
+                    'profile' => $this->pros->profilePayload($uid),
+                ]);
+                return;
+            }
+
+            if ($fields !== []) {
+                $this->pros->updateProfile($uid, $fields);
+            }
+            if ($heartbeat) {
+                $this->pros->touchPresence($uid);
+            }
+
             Response::ok([
                 'screen' => 'home_profile',
                 'profile' => $this->pros->profilePayload($uid),

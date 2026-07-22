@@ -106,6 +106,22 @@ final class BookingsEndpoint
                 return;
             }
 
+            // Service pin must be within the professional's work radius.
+            $proLat = isset($pro['home_lat']) && $pro['home_lat'] !== null ? (float) $pro['home_lat'] : null;
+            $proLng = isset($pro['home_lng']) && $pro['home_lng'] !== null ? (float) $pro['home_lng'] : null;
+            $radiusKm = max(1, (int) ($pro['work_radius_km'] ?? 5));
+            if ($proLat !== null && $proLng !== null) {
+                $distanceKm = ProRepository::haversineKm($proLat, $proLng, $addressLat, $addressLng);
+                if ($distanceKm > $radiusKm + 0.05) {
+                    Response::fail(
+                        "This location is {$distanceKm} km away. {$pro['full_name']} only serves within {$radiusKm} km. Move the pin closer or choose another professional.",
+                        422,
+                        'outside_work_radius',
+                    );
+                    return;
+                }
+            }
+
             $settings = new \ProEnroll\Api\Services\PlatformSettingsRepository();
             $visitFeePaise = (int) ($request->input('visit_fee_paise') ?: $pro['visit_fee_paise']);
             $visitFeePaise = $settings->clampVisitFeePaise($visitFeePaise);

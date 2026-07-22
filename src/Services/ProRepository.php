@@ -118,6 +118,16 @@ final class ProRepository
             $sets[] = "$key = ?";
             $params[] = $value;
         }
+
+        // Going online refreshes presence so customer search includes them.
+        if (
+            array_key_exists('is_available', $fields)
+            && (int) $fields['is_available'] === 1
+            && $this->hasLastSeenColumn()
+        ) {
+            $sets[] = 'last_seen_at = NOW()';
+        }
+
         if ($sets === []) {
             return $this->findByFirebaseUid($uid) ?? [];
         }
@@ -126,6 +136,69 @@ final class ProRepository
         $sql = 'UPDATE professionals SET ' . implode(', ', $sets) . ' WHERE firebase_uid = ?';
         $this->db->prepare($sql)->execute($params);
         return $this->findByFirebaseUid($uid) ?? [];
+    }
+
+    /** Minutes without heartbeat before an "online" pro is hidden from customers. */
+    public const ONLINE_PRESENCE_TTL_MINUTES = 15;
+
+    /** @var bool|null */
+    private static ?bool $hasLastSeenColumn = null;
+
+    public function hasLastSeenColumn(): bool
+    {
+        if (self::$hasLastSeenColumn !== null) {
+            return self::$hasLastSeenColumn;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'last_seen_at'");
+            self::$hasLastSeenColumn = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasLastSeenColumn = false;
+        }
+
+        return self::$hasLastSeenColumn;
+    }
+
+    /** Heartbeat while pro app is open and available. */
+    public function touchPresence(string $uid): bool
+    {
+        if (!$this->hasLastSeenColumn()) {
+            return false;
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE professionals
+             SET last_seen_at = NOW(), updated_at = NOW()
+             WHERE firebase_uid = ? AND is_available = 1'
+        );
+        $stmt->execute([$uid]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Mark pros offline if they stopped heartbeating (uninstall / kill / crash).
+     */
+    public function expireStaleOnlinePresence(): int
+    {
+        if (!$this->hasLastSeenColumn()) {
+            return 0;
+        }
+
+        $ttl = self::ONLINE_PRESENCE_TTL_MINUTES;
+        $stmt = $this->db->prepare(
+            "UPDATE professionals
+             SET is_available = 0, updated_at = NOW()
+             WHERE is_available = 1
+               AND (
+                 last_seen_at IS NULL
+                 OR last_seen_at < (NOW() - INTERVAL {$ttl} MINUTE)
+               )"
+        );
+        $stmt->execute();
+
+        return $stmt->rowCount();
     }
 
     /** @param list<array{category_code: string, experience_years: int, is_primary: bool}> $skills */
@@ -213,11 +286,21 @@ final class ProRepository
             ? ' AND COALESCE(p.listing_held, 0) = 0'
             : '';
 
+        // Drop ghost-online pros (app uninstalled / no heartbeat).
+        $this->expireStaleOnlinePresence();
+
+        $presenceFilter = '';
+        if ($this->hasLastSeenColumn()) {
+            $ttl = self::ONLINE_PRESENCE_TTL_MINUTES;
+            $presenceFilter = " AND p.last_seen_at IS NOT NULL
+              AND p.last_seen_at >= (NOW() - INTERVAL {$ttl} MINUTE)";
+        }
+
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
                   AND p.is_available = 1
-                  AND p.kyc_status = \'verified\'' . $heldFilter;
+                  AND p.kyc_status = \'verified\'' . $heldFilter . $presenceFilter;
         $params = [];
 
         if (!$useGeo) {
@@ -362,6 +445,8 @@ final class ProRepository
             'jobs_completed' => (int) $pro['jobs_completed'],
             'pro_score' => (int) $pro['pro_score'],
             'distance_km' => $dist,
+            'home_lat' => $proLat,
+            'home_lng' => $proLng,
             'primary_category_code' => $primary,
             'skills' => array_map(static fn ($s) => [
                 'category_code' => $s['category_code'],
