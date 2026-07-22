@@ -65,6 +65,20 @@ final class PlatformSettingsRepository
     }
 
     /**
+     * Hours after pro marks work done before unpaid awaiting_payment auto-completes.
+     * Default 48. Set 0 to disable.
+     */
+    public function awaitingPaymentAutoCompleteHours(): int
+    {
+        $v = (int) $this->get(
+            'awaiting_payment_auto_complete_hours',
+            (string) (Config::get('AWAITING_PAYMENT_AUTO_COMPLETE_HOURS') ?? '48'),
+        );
+
+        return max(0, min(720, $v));
+    }
+
+    /**
      * Minimum net wallet (credits − unpaid platform fee) allowed to accept jobs.
      * Default −₹200 (−20000 paise). Set in platform_settings / .env.
      */
@@ -146,6 +160,7 @@ final class PlatformSettingsRepository
             'hold_pro_after_free_limit' => $this->holdProAfterFreeLimit(),
             'visit_fee_min_paise' => $this->visitFeeMinPaise(),
             'visit_fee_max_paise' => $this->visitFeeMaxPaise(),
+            'awaiting_payment_auto_complete_hours' => $this->awaitingPaymentAutoCompleteHours(),
             'wallet_min_accept_paise' => $this->walletMinAcceptPaise(),
             'company_upi_id' => $this->companyUpiId(),
             'company_upi_name' => $this->companyUpiName(),

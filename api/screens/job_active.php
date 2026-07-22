@@ -71,6 +71,8 @@ final class JobActiveScreen extends ScreenHandler
 
         if ($request->method === 'GET') {
 
+            $bookings->autoCompleteStaleAwaitingPayments();
+
             $row = $bookings->findActiveForProfessional($proId);
 
             Response::ok([

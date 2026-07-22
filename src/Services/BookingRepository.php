@@ -209,52 +209,74 @@ final class BookingRepository
 
     public function markCompleted(int $bookingId, int $customerId): bool
     {
-        $booking = $this->findByIdForCustomer($bookingId, $customerId);
-        if ($booking === null) {
-            return false;
-        }
+        // Completion is only via visit-fee payment (or auto-timeout). No separate customer Complete.
+        return false;
+    }
 
-        // Visit fee unpaid → move to payment due (do not settle yet).
-        if (empty($booking['visit_fee_paid'])) {
-            if (!in_array((string) $booking['status'], [
-                'in_progress', 'arrived', 'en_route', 'awaiting_payment',
-            ], true)) {
-                return false;
-            }
-            if ((string) $booking['status'] === 'awaiting_payment') {
-                return true;
-            }
-            $stmt = $this->db->prepare(
-                "UPDATE service_bookings
-                 SET status = 'awaiting_payment', updated_at = NOW()
-                 WHERE id = ? AND customer_id = ?
-                   AND status IN ('in_progress', 'arrived', 'en_route')"
-            );
-            $stmt->execute([$bookingId, $customerId]);
-
-            return $stmt->rowCount() > 0;
-        }
-
-        if (!in_array((string) $booking['status'], [
-            'in_progress', 'awaiting_payment', 'arrived', 'en_route', 'confirmed',
-        ], true)) {
-            return false;
+    /**
+     * Auto-complete jobs stuck in awaiting_payment after the configured hours.
+     * Treats unpaid visit fee as settled offline (method = timeout) and settles wallet.
+     *
+     * @return int number of bookings completed
+     */
+    public function autoCompleteStaleAwaitingPayments(?int $hours = null): int
+    {
+        $settings = new PlatformSettingsRepository();
+        $hours = $hours ?? $settings->awaitingPaymentAutoCompleteHours();
+        if ($hours <= 0) {
+            return 0;
         }
 
         $stmt = $this->db->prepare(
-            'UPDATE service_bookings
-             SET status = ?, completed_at = NOW(), updated_at = NOW()
-             WHERE id = ? AND customer_id = ?
-               AND status IN (\'in_progress\', \'awaiting_payment\', \'arrived\', \'en_route\', \'confirmed\')'
+            "SELECT id, professional_id, customer_id
+             FROM service_bookings
+             WHERE status = 'awaiting_payment'
+               AND updated_at <= DATE_SUB(NOW(), INTERVAL ? HOUR)
+             ORDER BY updated_at ASC
+             LIMIT 100"
         );
-        $stmt->execute(['completed', $bookingId, $customerId]);
-        if ($stmt->rowCount() === 0) {
-            return false;
+        $stmt->execute([$hours]);
+        $rows = $stmt->fetchAll();
+        if ($rows === false || $rows === []) {
+            return 0;
         }
 
-        $this->settleCommissionAndCredit($bookingId, (int) $booking['professional_id']);
+        $done = 0;
+        foreach ($rows as $row) {
+            $bookingId = (int) $row['id'];
+            $professionalId = (int) $row['professional_id'];
+            if ($this->hasVisitFeePaymentColumns()) {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET visit_fee_paid = 1,
+                         visit_fee_paid_at = COALESCE(visit_fee_paid_at, NOW()),
+                         visit_fee_payment_method = COALESCE(NULLIF(visit_fee_payment_method, ''), 'timeout'),
+                         status = 'completed',
+                         completed_at = COALESCE(completed_at, NOW()),
+                         updated_at = NOW()
+                     WHERE id = ?
+                       AND status = 'awaiting_payment'"
+                );
+                $upd->execute([$bookingId]);
+            } else {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'completed',
+                         completed_at = COALESCE(completed_at, NOW()),
+                         updated_at = NOW()
+                     WHERE id = ?
+                       AND status = 'awaiting_payment'"
+                );
+                $upd->execute([$bookingId]);
+            }
+            if ($upd->rowCount() === 0) {
+                continue;
+            }
+            $this->settleCommissionAndCredit($bookingId, $professionalId);
+            $done++;
+        }
 
-        return true;
+        return $done;
     }
 
     public function addRating(int $bookingId, int $customerId, int $stars, ?string $review): bool
@@ -353,9 +375,8 @@ final class BookingRepository
             ],
             'can_rate' => $row['status'] === 'completed' && $rating === null,
             'can_cancel' => $row['status'] === 'confirmed',
-            'can_mark_completed' => !empty($row['visit_fee_paid']) && in_array($row['status'], [
-                'en_route', 'arrived', 'in_progress', 'awaiting_payment',
-            ], true),
+            // Pay visit fee = customer confirmation; no separate Complete action.
+            'can_mark_completed' => false,
             'can_pay_visit_fee' => empty($row['visit_fee_paid']) && ($row['status'] ?? '') === 'awaiting_payment',
             'tracking' => self::trackingPayload($row),
         ];
@@ -446,7 +467,7 @@ final class BookingRepository
             'en_route' => 'Technician en route',
             'arrived' => 'Arrived at your location',
             'in_progress' => 'Repair in progress',
-            'awaiting_payment' => 'Awaiting payment',
+            'awaiting_payment' => 'Confirm & pay visit fee',
             'completed' => 'Work completed',
             'cancelled' => 'Booking cancelled',
             default => ucfirst(str_replace('_', ' ', $status)),
@@ -467,7 +488,7 @@ final class BookingRepository
             ['key' => 'en_route', 'label' => 'Technician en route'],
             ['key' => 'arrived', 'label' => 'Arrived at your location'],
             ['key' => 'in_progress', 'label' => 'Repair in progress'],
-            ['key' => 'awaiting_payment', 'label' => 'Payment due'],
+            ['key' => 'awaiting_payment', 'label' => 'Confirm & pay'],
             ['key' => 'completed', 'label' => 'Work completed'],
         ];
         $order = array_column($steps, 'key');
@@ -521,6 +542,74 @@ final class BookingRepository
         $stmt->execute(array_merge([$professionalId], $categoryCodes));
 
         return $stmt->fetchAll();
+    }
+
+    /**
+     * Recent bookings for this professional (all statuses) for Jobs tab history.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listHistoryForProfessional(int $professionalId, int $limit = 40): array
+    {
+        $limit = max(1, min(100, $limit));
+        $stmt = $this->db->prepare(
+            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+             FROM service_bookings b
+             INNER JOIN customers c ON c.id = b.customer_id
+             WHERE b.professional_id = ?
+             ORDER BY COALESCE(b.completed_at, b.updated_at, b.created_at) DESC
+             LIMIT ?"
+        );
+        $stmt->bindValue(1, $professionalId, PDO::PARAM_INT);
+        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    public function historyPayload(array $row): array
+    {
+        $dbStatus = (string) ($row['status'] ?? '');
+
+        return [
+            'id' => (string) $row['id'],
+            'code' => $row['booking_code'],
+            'category_code' => $row['category_code'],
+            'problem' => $row['problem_description'],
+            'customer_name' => self::customerDisplayName($row),
+            'customer_area_name' => (string) ($row['address_text'] ?? ''),
+            'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+            'status' => $dbStatus,
+            'status_label' => self::proHistoryStatusLabel($dbStatus),
+            'visit_fee_paid' => !empty($row['visit_fee_paid']),
+            'created_at' => !empty($row['created_at'])
+                ? IstTime::format((string) $row['created_at'])
+                : null,
+            'completed_at' => !empty($row['completed_at'])
+                ? IstTime::format((string) $row['completed_at'])
+                : null,
+            'updated_at' => !empty($row['updated_at'])
+                ? IstTime::format((string) $row['updated_at'])
+                : null,
+        ];
+    }
+
+    private static function proHistoryStatusLabel(string $db): string
+    {
+        return match ($db) {
+            'confirmed' => 'New offer',
+            'en_route' => 'On the way',
+            'arrived' => 'Arrived',
+            'in_progress' => 'In progress',
+            'awaiting_payment' => 'Awaiting payment',
+            'completed' => 'Completed',
+            'cancelled' => 'Cancelled',
+            default => ucwords(str_replace('_', ' ', $db)),
+        };
     }
 
     public function findOfferForProfessional(int $bookingId, int $professionalId): ?array
@@ -716,7 +805,7 @@ final class BookingRepository
     }
 
     /**
-     * Customer pays visit fee after work is done → completed + settle pro credit.
+     * Customer pays visit fee after work is done → confirms work + completed + settle pro credit.
      *
      * @return array<string, mixed>|null updated booking row
      */

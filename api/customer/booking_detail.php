@@ -87,16 +87,11 @@ final class BookingDetailEndpoint
         }
 
         if (str_ends_with($path, '/complete') && $request->method === 'POST') {
-            $before = $bookings->findByIdForCustomer($bookingId, $customerId);
-            if (!$bookings->markCompleted($bookingId, $customerId)) {
-                Response::fail('Cannot mark completed', 400, 'invalid_state');
-                return;
-            }
-            $row = $bookings->findByIdForCustomer($bookingId, $customerId);
-            if ($before !== null && $row !== null && ($row['status'] ?? '') === 'completed') {
-                BookingPushNotifier::completedForCustomer($row);
-            }
-            Response::ok(['booking' => $bookings->bookingPayload($row ?? [])]);
+            Response::fail(
+                'Pay the visit fee to confirm work and complete this booking',
+                400,
+                'pay_to_complete',
+            );
             return;
         }
 
@@ -121,6 +116,7 @@ final class BookingDetailEndpoint
             return;
         }
 
+        $bookings->autoCompleteStaleAwaitingPayments();
         $row = $bookings->findByIdForCustomer($bookingId, $customerId);
         if ($row === null) {
             Response::fail('Booking not found', 404, 'not_found');

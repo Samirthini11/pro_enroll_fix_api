@@ -100,6 +100,18 @@ final class HomeJobsScreen extends ScreenHandler
 
 
 
+        $historyRows = $bookings->listHistoryForProfessional((int) $pro['id']);
+
+        $history = array_map(
+
+            static fn (array $row) => $bookings->historyPayload($row),
+
+            $historyRows,
+
+        );
+
+
+
         Response::ok([
 
             'screen' => 'home_jobs',
@@ -109,6 +121,8 @@ final class HomeJobsScreen extends ScreenHandler
             'offers' => $offers,
 
             'active_job' => $active,
+
+            'job_history' => $history,
 
         ]);
 

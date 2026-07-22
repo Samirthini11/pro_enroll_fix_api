@@ -35,6 +35,7 @@ final class BookingsEndpoint
         $bookings = new BookingRepository();
 
         if ($request->method === 'GET') {
+            $bookings->autoCompleteStaleAwaitingPayments();
             $rows = $bookings->listForCustomer($customerId);
             $list = array_map(static fn ($r) => $bookings->bookingPayload($r), $rows);
             Response::ok(['bookings' => $list]);
