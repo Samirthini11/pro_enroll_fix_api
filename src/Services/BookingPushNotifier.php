@@ -6,6 +6,16 @@ namespace ProEnroll\Api\Services;
 
 /**
  * Fire-and-forget booking push alerts — never blocks API responses.
+ *
+ * Communication rule: notify the OTHER party only (never the actor).
+ *
+ * | Event                         | Notify        |
+ * |-------------------------------|---------------|
+ * | Customer creates booking      | Professional  |
+ * | Pro accepts / rejects         | Customer      |
+ * | Pro status / work done        | Customer      |
+ * | Customer cancels              | Professional  |
+ * | Customer pays visit fee       | Professional  |
  */
 final class BookingPushNotifier
 {

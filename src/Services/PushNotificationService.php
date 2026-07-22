@@ -163,6 +163,7 @@ final class PushNotificationService
             "A customer booked you for {$category}. Tap to accept or reject.",
             [
                 'type' => 'job_offer',
+                'audience' => 'professional',
                 'booking_id' => $bookingId,
                 'route' => '/job/offer',
             ],
@@ -190,6 +191,7 @@ final class PushNotificationService
             'Customer cancelled booking' . ($code !== '' ? " {$code}" : '') . ' before you were on the way.',
             [
                 'type' => 'booking_cancelled',
+                'audience' => 'professional',
                 'booking_id' => $bookingId,
                 'route' => '/home',
             ],
@@ -222,6 +224,7 @@ final class PushNotificationService
             'Customer paid for booking' . ($code !== '' ? " {$code}" : '') . '.' . $creditText,
             [
                 'type' => 'visit_fee_paid',
+                'audience' => 'professional',
                 'booking_id' => (string) ($booking['id'] ?? ''),
                 'route' => '/home',
                 'tab' => '1',
@@ -247,6 +250,7 @@ final class PushNotificationService
             "{$proName} received your request" . ($code !== '' ? " ({$code})" : '') . '. Visit fee is paid after work is done.',
             [
                 'type' => 'booking_confirmed',
+                'audience' => 'customer',
                 'booking_id' => $bookingId,
                 'route' => '/customer/booking',
             ],
@@ -275,6 +279,7 @@ final class PushNotificationService
             "{$proName} accepted your job and is on the way.",
             [
                 'type' => 'booking_accepted',
+                'audience' => 'customer',
                 'booking_id' => $bookingId,
                 'route' => '/customer/booking',
             ],
@@ -298,6 +303,7 @@ final class PushNotificationService
             "{$proName} is unavailable for this booking. Try another pro nearby.",
             [
                 'type' => 'booking_rejected',
+                'audience' => 'customer',
                 'booking_id' => $bookingId,
                 'route' => '/customer/bookings',
             ],
@@ -318,6 +324,7 @@ final class PushNotificationService
         [$title, $body] = match ($apiStatus) {
             'awaiting_payment' => ['Confirm & pay', "{$proName} finished the job. Pay the visit fee to confirm and complete."],
             'on_the_way' => ['Pro on the way', "{$proName} is heading to your location."],
+            'arrived' => ['Pro arrived', "{$proName} has arrived at your location."],
             'in_progress' => ['Work started', "{$proName} has started working on your job."],
             'completed' => ['Job update', "{$proName} marked the job as done."],
             default => ['Booking update', "Your booking status changed to {$apiStatus}."],
@@ -329,6 +336,7 @@ final class PushNotificationService
             $body,
             [
                 'type' => 'booking_status',
+                'audience' => 'customer',
                 'booking_id' => $bookingId,
                 'status' => $apiStatus,
                 'route' => '/customer/booking',
@@ -357,6 +365,7 @@ final class PushNotificationService
             "{$proName} completed your service.{$amountText}",
             [
                 'type' => 'booking_completed',
+                'audience' => 'customer',
                 'booking_id' => $bookingId,
                 'route' => '/customer/booking',
             ],
@@ -370,20 +379,11 @@ final class PushNotificationService
         $authUid = (string) ($pro['firebase_uid'] ?? '');
         $phone = (string) ($pro['phone_e164'] ?? '');
 
-        $tokens = array_values(array_unique(array_merge(
+        // Strict professional role only — do not ping the actor's customer session.
+        return array_values(array_unique(array_merge(
             $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'professional') : [],
             $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
         )));
-
-        // Same device often registers under customer role only — include those too.
-        if ($phone !== '') {
-            $tokens = array_values(array_unique(array_merge(
-                $tokens,
-                $repo->tokensForPhone($phone, 'customer'),
-            )));
-        }
-
-        return $tokens;
     }
 
     /** @param array<string, mixed> $booking */
@@ -426,10 +426,10 @@ final class PushNotificationService
         $authUid = (string) ($customer['auth_uid'] ?? '');
         $phone = (string) ($customer['phone_e164'] ?? '');
 
+        // Strict customer role only — never deliver customer alerts to pro tokens.
         return array_values(array_unique(array_merge(
             $authUid !== '' ? $repo->tokensForAuthUid($authUid, 'customer') : [],
             $phone !== '' ? $repo->tokensForPhone($phone, 'customer') : [],
-            $phone !== '' ? $repo->tokensForPhone($phone, 'professional') : [],
         )));
     }
 

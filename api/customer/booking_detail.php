@@ -79,7 +79,7 @@ final class BookingDetailEndpoint
                 return;
             }
             if (empty($before['visit_fee_paid'])) {
-                BookingPushNotifier::completedForCustomer($row);
+                // Customer just paid — notify pro only (communication to the other party).
                 BookingPushNotifier::visitFeePaidForPro($row);
             }
             Response::ok(['booking' => $bookings->bookingPayload($row)]);

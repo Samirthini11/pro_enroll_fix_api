@@ -158,7 +158,6 @@ final class BookingsEndpoint
             ]);
 
             BookingPushNotifier::newBookingForPro($pro, $row);
-            BookingPushNotifier::confirmedForCustomer($row, $pro);
 
             Response::ok(['booking' => $bookings->bookingPayload($row)], 201);
         } catch (\Throwable $e) {

@@ -107,7 +107,6 @@ final class DeviceTokenRepository
         return array_values(array_unique(array_merge(
             $authUid !== '' ? $this->tokensForAuthUid($authUid, 'customer') : [],
             $phone !== '' ? $this->tokensForPhone($phone, 'customer') : [],
-            $phone !== '' ? $this->tokensForPhone($phone, 'professional') : [],
         )));
     }
 
