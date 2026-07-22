@@ -53,12 +53,12 @@ final class PlatformSettingsRepository
         return in_array(strtolower($raw), ['1', 'true', 'yes', 'on'], true);
     }
 
-    /** Max visit fee in paise. Default ₹200 (20000). */
+    /** Max visit fee in paise. Default ₹500 (50000). */
     public function visitFeeMaxPaise(): int
     {
         $v = (int) $this->get(
             'visit_fee_max_paise',
-            (string) (Config::get('VISIT_FEE_MAX_PAISE') ?? '20000'),
+            (string) (Config::get('VISIT_FEE_MAX_PAISE') ?? '50000'),
         );
 
         return max(100, $v);
