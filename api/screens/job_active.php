@@ -174,7 +174,35 @@ final class JobActiveScreen extends ScreenHandler
 
 
         if ($request->method === 'POST') {
-            // Temporary: visit fee only — final amount entry disabled for professionals.
+            $action = strtolower(trim((string) $request->input('action', 'complete')));
+
+            if ($action === 'confirm_payment' || $action === 'payment_received') {
+                $method = strtolower(trim((string) $request->input('payment_method', 'cash')));
+                $row = $bookings->confirmPaymentReceivedForProfessional($bookingId, $proId, $method);
+                if ($row === null) {
+                    Response::fail(
+                        'Confirm payment only after work is done and fee is still due',
+                        400,
+                        'invalid_state',
+                    );
+                    return;
+                }
+
+                BookingPushNotifier::completedForCustomer($row, $pro);
+
+                $proLat = isset($pro['last_lat']) ? (float) $pro['last_lat'] : null;
+                $proLng = isset($pro['last_lng']) ? (float) $pro['last_lng'] : null;
+
+                Response::ok([
+                    'screen' => 'job_active',
+                    'status' => 'completed',
+                    'payment_due' => false,
+                    'active_job' => $bookings->activeJobPayload($row, $proLat, $proLng),
+                ]);
+                return;
+            }
+
+            // Work done → awaiting customer pay (or pro cash confirm).
             if (!$bookings->completeActiveJob($bookingId, $proId, null)) {
                 Response::fail('Could not complete job', 400);
                 return;
@@ -182,7 +210,6 @@ final class JobActiveScreen extends ScreenHandler
 
             $completed = $bookings->findById($bookingId);
             if ($completed !== null) {
-                // Work finished — ask customer to pay visit fee in app.
                 BookingPushNotifier::statusForCustomer($completed, 'awaiting_payment', $pro);
             }
 
@@ -192,7 +219,7 @@ final class JobActiveScreen extends ScreenHandler
 
             Response::ok([
                 'screen' => 'job_active',
-                'status' => 'completed',
+                'status' => 'awaiting_payment',
                 'final_amount_paise' => null,
                 'payment_due' => true,
                 'active_job' => $row !== null

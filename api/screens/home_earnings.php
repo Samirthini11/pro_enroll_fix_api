@@ -8,11 +8,15 @@ use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Services\BookingRepository;
+use ProEnroll\Api\Services\PlatformSettingsRepository;
+use ProEnroll\Api\Services\WalletLedgerRepository;
 
 /**
  * Flutter: WalletTab + EarningsTab
  * GET  /v1/screens/home-earnings
- * POST /v1/screens/home-earnings  { "action": "mark_platform_fee_paid", "utr": "..." }
+ * POST /v1/screens/home-earnings
+ *   { "action": "recharge_wallet", "amount_paise": 5000, "utr": "..." }
+ *   { "action": "mark_platform_fee_paid", "utr": "..." }  // legacy unpaid fee clear
  */
 final class HomeEarningsScreen extends ScreenHandler
 {
@@ -25,8 +29,39 @@ final class HomeEarningsScreen extends ScreenHandler
             'month_paise' => 0,
             'payouts_this_month_paise' => 0,
             'pending_payout_paise' => 0,
+            'wallet_balance_paise' => 0,
             'jobs_today' => 0,
             'platform_fee_due_paise' => 0,
+            'wallet_min_accept_paise' => 5000,
+            'wallet_recharge_min_paise' => 5000,
+            'visit_commission_percent' => 10,
+            'free_booking_limit' => 5,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function payload(
+        BookingRepository $bookings,
+        WalletLedgerRepository $ledger,
+        int $proId,
+        array $pro,
+    ): array {
+        $summary = $bookings->earningsSummaryForProfessional($proId);
+        $walletHistory = $ledger->history($proId);
+        $creditHistory = $walletHistory !== []
+            ? $walletHistory
+            : $bookings->creditHistoryForProfessional($proId);
+
+        return [
+            'screen' => 'home_earnings',
+            'summary' => $summary,
+            'credit_history' => $creditHistory,
+            'wallet_history' => $walletHistory,
+            'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
+            'rating_count' => (int) ($pro['rating_count'] ?? 0),
+            'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
+            'listing_held' => (bool) ($pro['listing_held'] ?? false),
+            'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
         ];
     }
 
@@ -42,6 +77,7 @@ final class HomeEarningsScreen extends ScreenHandler
                 'screen' => 'home_earnings',
                 'summary' => self::emptySummary(),
                 'credit_history' => [],
+                'wallet_history' => [],
                 'rating_avg' => 0,
                 'rating_count' => 0,
                 'jobs_completed' => 0,
@@ -50,44 +86,66 @@ final class HomeEarningsScreen extends ScreenHandler
         }
 
         $bookings = new BookingRepository();
+        $ledger = new WalletLedgerRepository();
         $proId = (int) $pro['id'];
 
         if ($request->method === 'POST') {
             $action = (string) $request->input('action', '');
-            if ($action !== 'mark_platform_fee_paid') {
-                Response::fail('Unknown action', 422, 'validation');
+
+            if ($action === 'recharge_wallet') {
+                $amountPaise = (int) $request->input('amount_paise', 0);
+                $utr = trim((string) $request->input('utr', ''));
+                if ($utr === '') {
+                    Response::fail('Enter UTR number after paying via UPI', 422, 'utr_required');
+                    return;
+                }
+                try {
+                    $result = $ledger->recharge($proId, $amountPaise, $utr);
+                    $bookings->syncListingHoldForWallet($proId);
+                } catch (\InvalidArgumentException $e) {
+                    Response::fail($e->getMessage(), 422, 'validation');
+                    return;
+                } catch (\Throwable $e) {
+                    Response::fail($e->getMessage(), 500, 'recharge_failed');
+                    return;
+                }
+
+                $pro = $this->proRow($request) ?? $pro;
+                $out = $this->payload($bookings, $ledger, $proId, $pro);
+                $out['recharged'] = $result;
+                $out['utr'] = strtoupper(preg_replace('/\s+/', '', $utr) ?? $utr);
+                Response::ok($out);
                 return;
             }
 
-            $utr = trim((string) $request->input('utr', ''));
-            if ($utr === '') {
-                Response::fail('Enter UTR number after paying via UPI', 422, 'utr_required');
+            if ($action === 'mark_platform_fee_paid') {
+                $utr = trim((string) $request->input('utr', ''));
+                if ($utr === '') {
+                    Response::fail('Enter UTR number after paying via UPI', 422, 'utr_required');
+                    return;
+                }
+
+                try {
+                    $updated = $bookings->markPlatformFeePaidViaUpiAndSync($proId, $utr);
+                } catch (\InvalidArgumentException $e) {
+                    Response::fail($e->getMessage(), 422, 'validation');
+                    return;
+                }
+
+                if ($updated < 1) {
+                    Response::fail('No unpaid platform fee found — use wallet recharge instead', 400, 'nothing_to_pay');
+                    return;
+                }
+
+                $pro = $this->proRow($request) ?? $pro;
+                $out = $this->payload($bookings, $ledger, $proId, $pro);
+                $out['marked_paid'] = $updated;
+                $out['utr'] = strtoupper(preg_replace('/\s+/', '', $utr) ?? $utr);
+                Response::ok($out);
                 return;
             }
 
-            try {
-                $updated = $bookings->markPlatformFeePaidViaUpiAndSync($proId, $utr);
-            } catch (\InvalidArgumentException $e) {
-                Response::fail($e->getMessage(), 422, 'validation');
-                return;
-            }
-
-            if ($updated < 1) {
-                Response::fail('No unpaid platform fee found', 400, 'nothing_to_pay');
-                return;
-            }
-
-            $summary = $bookings->earningsSummaryForProfessional($proId);
-            Response::ok([
-                'screen' => 'home_earnings',
-                'marked_paid' => $updated,
-                'utr' => strtoupper(preg_replace('/\s+/', '', $utr) ?? $utr),
-                'summary' => $summary,
-                'credit_history' => $bookings->creditHistoryForProfessional($proId),
-                'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
-                'rating_count' => (int) ($pro['rating_count'] ?? 0),
-                'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
-            ]);
+            Response::fail('Unknown action', 422, 'validation');
             return;
         }
 
@@ -97,25 +155,32 @@ final class HomeEarningsScreen extends ScreenHandler
         }
 
         try {
-            $summary = $bookings->earningsSummaryForProfessional($proId);
-            // Refresh hold from current wallet overdraft (e.g. after deploy).
             $bookings->syncListingHoldForWallet($proId);
             $pro = $this->proRow($request) ?? $pro;
-            $history = $bookings->creditHistoryForProfessional($proId);
+            $out = $this->payload($bookings, $ledger, $proId, $pro);
         } catch (\Throwable) {
-            $summary = self::emptySummary();
-            $history = [];
+            $out = [
+                'screen' => 'home_earnings',
+                'summary' => self::emptySummary(),
+                'credit_history' => [],
+                'wallet_history' => [],
+                'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
+                'rating_count' => (int) ($pro['rating_count'] ?? 0),
+                'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
+            ];
         }
 
-        Response::ok([
-            'screen' => 'home_earnings',
-            'summary' => $summary,
-            'credit_history' => $history,
-            'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
-            'rating_count' => (int) ($pro['rating_count'] ?? 0),
-            'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
-            'listing_held' => (bool) ($pro['listing_held'] ?? false),
-            'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
-        ]);
+        // Ensure UPI URI uses selected/suggested recharge when settings exist.
+        if (isset($out['summary']) && is_array($out['summary'])) {
+            $settings = new PlatformSettingsRepository();
+            $amt = (int) ($out['summary']['suggested_recharge_paise']
+                ?? $settings->walletRechargeMinPaise());
+            $out['summary']['company_upi_pay_uri'] = $settings->companyUpiPayUri(
+                $amt,
+                'Pro Enroll wallet recharge',
+            );
+        }
+
+        Response::ok($out);
     }
 }

@@ -121,7 +121,9 @@ final class JobOfferScreen extends ScreenHandler
 
         if ($request->method === 'POST' && str_ends_with($request->path, '/accept')) {
 
-            $gate = $bookings->acceptWalletGate($proId);
+            $offer = $bookings->findOfferForProfessional($bookingId, $proId);
+            $visitFee = $offer !== null ? (int) ($offer['visit_fee_paise'] ?? 0) : null;
+            $gate = $bookings->acceptWalletGate($proId, $visitFee);
             if (!$gate['ok']) {
                 Response::fail($gate['message'], 403, 'wallet_limit');
                 return;

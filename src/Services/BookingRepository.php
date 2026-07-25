@@ -553,9 +553,11 @@ final class BookingRepository
     {
         $limit = max(1, min(100, $limit));
         $stmt = $this->db->prepare(
-            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone,
+                    r.stars AS rating_stars, r.review_text AS rating_review
              FROM service_bookings b
              INNER JOIN customers c ON c.id = b.customer_id
+             LEFT JOIN booking_ratings r ON r.booking_id = b.id
              WHERE b.professional_id = ?
              ORDER BY COALESCE(b.completed_at, b.updated_at, b.created_at) DESC
              LIMIT ?"
@@ -575,17 +577,35 @@ final class BookingRepository
     {
         $dbStatus = (string) ($row['status'] ?? '');
 
+        $phone = (string) ($row['customer_phone'] ?? '');
+        // Contact details only while the job is live; hide once it is closed.
+        $isLive = in_array($dbStatus, [
+            'confirmed', 'en_route', 'arrived', 'in_progress', 'awaiting_payment',
+        ], true);
+
         return [
             'id' => (string) $row['id'],
             'code' => $row['booking_code'],
             'category_code' => $row['category_code'],
+            'category_name' => $this->categoryName((string) $row['category_code']),
             'problem' => $row['problem_description'],
             'customer_name' => self::customerDisplayName($row),
             'customer_area_name' => (string) ($row['address_text'] ?? ''),
+            'customer_phone_e164' => $isLive && $phone !== '' ? $phone : null,
+            'customer_phone_masked' => $phone !== '' ? ProRepository::maskPhone($phone) : null,
             'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+            'pro_credit_paise' => isset($row['pro_credit_paise']) && $row['pro_credit_paise'] !== null
+                ? (int) $row['pro_credit_paise'] : null,
+            'commission_paise' => isset($row['commission_paise']) && $row['commission_paise'] !== null
+                ? (int) $row['commission_paise'] : null,
+            'commission_waived' => !empty($row['commission_waived']),
             'status' => $dbStatus,
             'status_label' => self::proHistoryStatusLabel($dbStatus),
             'visit_fee_paid' => !empty($row['visit_fee_paid']),
+            'visit_fee_payment_method' => $row['visit_fee_payment_method'] ?? null,
+            'rating_stars' => isset($row['rating_stars']) && $row['rating_stars'] !== null
+                ? (int) $row['rating_stars'] : null,
+            'rating_review' => $row['rating_review'] ?? null,
             'created_at' => !empty($row['created_at'])
                 ? IstTime::format((string) $row['created_at'])
                 : null,
@@ -651,11 +671,16 @@ final class BookingRepository
     }
 
     /**
-     * Net wallet = unpaid credits − unpaid platform fee.
-     * Pros may accept while net >= wallet_min_accept_paise (default −₹200).
+     * Prepaid wallet balance (UPI recharges − platform fee debits).
+     * Falls back to legacy net (job credits − unpaid fee) if ledger missing.
      */
     public function netWalletPaise(int $professionalId): int
     {
+        $ledger = new WalletLedgerRepository();
+        if ($ledger->tableExists()) {
+            return $ledger->balancePaise($professionalId);
+        }
+
         $wallet = $this->walletBalancePaiseOnly($professionalId);
         $feeDue = $this->platformFeeDuePaise($professionalId);
 
@@ -682,15 +707,12 @@ final class BookingRepository
         }
     }
 
-    public function canProfessionalAccept(int $professionalId): bool
+    public function canProfessionalAccept(int $professionalId, ?int $visitFeePaise = null): bool
     {
-        $settings = new PlatformSettingsRepository();
-        $min = $settings->walletMinAcceptPaise();
-
-        return $this->netWalletPaise($professionalId) >= $min;
+        return $this->acceptWalletGate($professionalId, $visitFeePaise)['ok'];
     }
 
-    /** Hold / release listing based on wallet overdraft limit (not free-tier alone). */
+    /** Hold / release listing based on prepaid wallet floor (after free tier). */
     public function syncListingHoldForWallet(int $professionalId): void
     {
         $pros = new ProRepository();
@@ -701,24 +723,48 @@ final class BookingRepository
         }
     }
 
-    /** @return array{ok: bool, net_paise: int, min_paise: int, message: string} */
-    public function acceptWalletGate(int $professionalId): array
+    /**
+     * First N jobs are free. After that, prepaid wallet must stay ≥ min (₹50)
+     * and cover this offer's platform fee when visit fee is known.
+     *
+     * @return array{ok: bool, net_paise: int, min_paise: int, message: string}
+     */
+    public function acceptWalletGate(int $professionalId, ?int $visitFeePaise = null): array
     {
         $settings = new PlatformSettingsRepository();
         $min = $settings->walletMinAcceptPaise();
-        $net = $this->netWalletPaise($professionalId);
-        $ok = $net >= $min;
-        $limitRupees = abs((int) round($min / 100));
+        $balance = $this->netWalletPaise($professionalId);
+        $used = $this->freeBookingsUsed($professionalId);
+        $remaining = max(0, $settings->freeBookingLimit() - $used);
+
+        if ($remaining > 0) {
+            return [
+                'ok' => true,
+                'net_paise' => $balance,
+                'min_paise' => $min,
+                'message' => 'OK',
+            ];
+        }
+
+        $needed = $min;
+        if ($visitFeePaise !== null && $visitFeePaise > 0) {
+            $commission = (int) round($visitFeePaise * $settings->visitCommissionPercent() / 100);
+            $needed = max($min, $commission);
+        }
+
+        $ok = $balance >= $needed;
+        $neededRupees = (int) round($needed / 100);
 
         return [
             'ok' => $ok,
-            'net_paise' => $net,
-            'min_paise' => $min,
+            'net_paise' => $balance,
+            'min_paise' => $needed,
             'message' => $ok
                 ? 'OK'
                 : sprintf(
-                    'Wallet overdraft limit reached (₹%d). Pay platform fee in Wallet to accept more jobs.',
-                    $limitRupees
+                    'Wallet balance too low. Recharge at least ₹%d via company UPI to accept jobs (min ₹%d).',
+                    $neededRupees,
+                    (int) round($min / 100),
                 ),
         ];
     }
@@ -737,12 +783,12 @@ final class BookingRepository
 
     public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
     {
-        // awaiting_payment / completed are finished from the pro side — not an active job.
+        // Include awaiting_payment so pro can confirm cash / offline payment received.
         $sql = "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
                 FROM service_bookings b
                 INNER JOIN customers c ON c.id = b.customer_id
                 WHERE b.professional_id = ?
-                  AND b.status IN ('en_route', 'arrived', 'in_progress')";
+                  AND b.status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')";
         $params = [$professionalId];
         if ($bookingId !== null) {
             $sql .= ' AND b.id = ?';
@@ -755,6 +801,63 @@ final class BookingRepository
         $row = $stmt->fetch();
 
         return $row ?: null;
+    }
+
+    /**
+     * Pro confirms visit fee received offline (cash / UPI outside app) → completed + settle.
+     *
+     * @return array<string, mixed>|null updated booking row
+     */
+    public function confirmPaymentReceivedForProfessional(
+        int $bookingId,
+        int $professionalId,
+        string $paymentMethod = 'cash',
+    ): ?array {
+        $booking = $this->findById($bookingId);
+        if ($booking === null || (int) $booking['professional_id'] !== $professionalId) {
+            return null;
+        }
+        if ((string) ($booking['status'] ?? '') !== 'awaiting_payment') {
+            return null;
+        }
+
+        $method = strtolower(trim($paymentMethod));
+        if (!in_array($method, ['cash', 'upi', 'card', 'offline'], true)) {
+            $method = 'cash';
+        }
+
+        if ($this->hasVisitFeePaymentColumns()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET visit_fee_paid = 1,
+                     visit_fee_paid_at = COALESCE(visit_fee_paid_at, NOW()),
+                     visit_fee_payment_method = ?,
+                     status = 'completed',
+                     completed_at = COALESCE(completed_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status = 'awaiting_payment'"
+            );
+            $stmt->execute([$method, $bookingId, $professionalId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'completed',
+                     completed_at = COALESCE(completed_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status = 'awaiting_payment'"
+            );
+            $stmt->execute([$bookingId, $professionalId]);
+        }
+
+        if ($stmt->rowCount() === 0) {
+            return $this->findById($bookingId);
+        }
+
+        $this->settleCommissionAndCredit($bookingId, $professionalId);
+
+        return $this->findById($bookingId);
     }
 
     public function updateActiveJobStatus(int $bookingId, int $professionalId, string $apiStatus): bool
@@ -866,6 +969,7 @@ final class BookingRepository
 
     /**
      * Apply visit-fee commission (or waive for free bookings) and update pro counters / hold.
+     * After free tier: deduct percent of visit fee from prepaid wallet.
      */
     public function settleCommissionAndCredit(int $bookingId, int $professionalId): void
     {
@@ -888,7 +992,7 @@ final class BookingRepository
         $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
         $final = isset($row['final_amount_paise']) && $row['final_amount_paise'] !== null
             ? (int) $row['final_amount_paise'] : null;
-        // Platform fee (5% of visit) is paid by pro to company UPI — wallet gets full gross.
+        // Visit fee stays with pro as earnings; platform fee is deducted from prepaid wallet.
         $gross = ($final !== null && $final >= 100) ? $final : $visitFee;
 
         // Free tier is based on completed jobs; this booking may already be completed.
@@ -922,14 +1026,56 @@ final class BookingRepository
             }
         }
 
+        // Deduct platform fee from prepaid wallet and mark fee settled.
+        if ($commission > 0) {
+            $ledger = new WalletLedgerRepository();
+            if ($ledger->tableExists()) {
+                try {
+                    $ledger->debitCommission($professionalId, $bookingId, $commission);
+                    $this->markBookingCommissionPaidFromWallet($bookingId);
+                } catch (\Throwable) {
+                    // Leave as unpaid fee due; listing hold will catch low balance.
+                }
+            }
+        }
+
         $pros = new ProRepository();
         $pros->incrementJobsCompleted($professionalId);
         if ($isFree && $this->hasProFreeTierColumns()) {
             $pros->incrementFreeBookingsUsed($professionalId);
         }
 
-        // Hold only when net wallet drops below configured floor (default −₹200).
+        // Hold when prepaid wallet drops below min after free tier.
         $this->syncListingHoldForWallet($professionalId);
+    }
+
+    private function markBookingCommissionPaidFromWallet(int $bookingId): void
+    {
+        if (!$this->hasCommissionUpiPaidColumn()) {
+            return;
+        }
+        if ($this->hasCommissionUpiUtrColumn()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET commission_upi_paid_at = COALESCE(commission_upi_paid_at, NOW()),
+                     commission_upi_utr = COALESCE(commission_upi_utr, 'WALLET'),
+                     updated_at = NOW()
+                 WHERE id = ?
+                   AND commission_paise > 0
+                   AND commission_upi_paid_at IS NULL"
+            );
+            $stmt->execute([$bookingId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET commission_upi_paid_at = COALESCE(commission_upi_paid_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ?
+                   AND commission_paise > 0
+                   AND commission_upi_paid_at IS NULL"
+            );
+            $stmt->execute([$bookingId]);
+        }
     }
 
     public function completedJobsCount(int $professionalId): int
@@ -972,28 +1118,41 @@ final class BookingRepository
         $remaining = max(0, $limit - $used);
         $pro = (new ProRepository())->findById($professionalId);
         $feeDue = $this->platformFeeDuePaise($professionalId);
+        $prepaid = $this->netWalletPaise($professionalId);
+        $min = $settings->walletMinAcceptPaise();
+        $rechargeMin = $settings->walletRechargeMinPaise();
         $upi = $settings->companyUpiId();
+        $suggestRecharge = $prepaid < $min
+            ? max($rechargeMin, $min - $prepaid)
+            : $rechargeMin;
 
         return array_merge($settings->publicPayload(), [
             'free_bookings_used' => $used,
             'free_bookings_remaining' => $remaining,
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
             'platform_fee_due_paise' => $feeDue,
-            'wallet_net_paise' => $this->netWalletPaise($professionalId),
-            'wallet_min_accept_paise' => $settings->walletMinAcceptPaise(),
+            'wallet_balance_paise' => $prepaid,
+            'wallet_net_paise' => $prepaid,
+            'wallet_min_accept_paise' => $min,
+            'wallet_recharge_min_paise' => $rechargeMin,
+            'suggested_recharge_paise' => $suggestRecharge,
             'can_accept_jobs' => $this->canProfessionalAccept($professionalId),
-            'company_upi_pay_uri' => $feeDue > 0
-                ? $settings->companyUpiPayUri($feeDue, 'Pro Enroll platform fee')
-                : $settings->companyUpiPayUri(0, 'Pro Enroll platform fee'),
+            'company_upi_pay_uri' => $settings->companyUpiPayUri(
+                $suggestRecharge,
+                'Pro Enroll wallet recharge',
+            ),
             'commission_note' => $remaining > 0
                 ? sprintf(
-                    'Next %d booking(s) free. After that, pay %d%% platform fee to UPI %s.',
+                    'First %d jobs free (%d left). After that keep min ₹%d in wallet; %d%% of visit fee is deducted per job. Recharge via company UPI %s.',
+                    $limit,
                     $remaining,
+                    (int) round($min / 100),
                     $settings->visitCommissionPercent(),
                     $upi,
                 )
                 : sprintf(
-                    'Pay platform fee (%d%% of visit) to company UPI %s via QR / UPI app.',
+                    'Keep min ₹%d in wallet. Each job deducts %d%% of visit fee. Recharge via company UPI %s.',
+                    (int) round($min / 100),
                     $settings->visitCommissionPercent(),
                     $upi,
                 ),
@@ -1245,7 +1404,7 @@ final class BookingRepository
         $percent = $settings->visitCommissionPercent();
         $isFree = $remaining > 0;
         $commission = $isFree ? 0 : (int) round($visitFeePaise * $percent / 100);
-        $credit = max(0, $visitFeePaise); // Full visit fee to wallet; fee paid via company UPI.
+        $credit = max(0, $visitFeePaise);
         $settingsName = $settings->companyUpiId();
 
         return [
@@ -1256,12 +1415,12 @@ final class BookingRepository
             'pro_credit_paise' => $credit,
             'company_upi_id' => $settingsName,
             'label' => $isFree
-                ? sprintf('Free booking — full visit fee to wallet (%d left)', $remaining)
+                ? sprintf('Free booking — no wallet deduction (%d left)', $remaining)
                 : sprintf(
-                    'Wallet +%s · Pay platform fee %s to %s',
+                    'Visit fee %s · Wallet −%s (%d%%)',
                     '₹' . number_format($credit / 100, 0),
                     '₹' . number_format($commission / 100, 0),
-                    $settingsName,
+                    $percent,
                 ),
         ];
     }
@@ -1356,8 +1515,8 @@ final class BookingRepository
             'en_route' => 'on_the_way',
             'arrived' => 'arrived',
             'in_progress' => 'in_progress',
-            // Pro finished work; show completed UI while customer pays visit fee.
-            'awaiting_payment' => 'completed',
+            // Pro finished work; customer must pay (or pro confirms cash received).
+            'awaiting_payment' => 'awaiting_payment',
             'completed' => 'completed',
             'cancelled' => 'cancelled',
             default => 'accepted',
@@ -1439,16 +1598,19 @@ final class BookingRepository
         }
 
         $today = (int) ($row['today_paise'] ?? 0);
-        $wallet = (int) ($row['wallet_balance_paise'] ?? $today);
+        $earningsWallet = (int) ($row['wallet_balance_paise'] ?? $today);
         $meta = $this->commissionMetaForProfessional($professionalId);
+        // Prefer prepaid wallet balance from meta when ledger is active.
+        $prepaid = (int) ($meta['wallet_balance_paise'] ?? $this->netWalletPaise($professionalId));
 
         return array_merge([
             'today_paise' => $today,
             'week_paise' => (int) ($row['week_paise'] ?? 0),
             'month_paise' => (int) ($row['month_paise'] ?? 0),
             'payouts_this_month_paise' => (int) ($row['payouts_this_month_paise'] ?? 0),
-            'pending_payout_paise' => $wallet,
-            'wallet_balance_paise' => $wallet,
+            'pending_payout_paise' => $earningsWallet,
+            'earnings_balance_paise' => $earningsWallet,
+            'wallet_balance_paise' => $prepaid,
             'jobs_today' => (int) ($row['jobs_today'] ?? 0),
             'commission_today_paise' => (int) ($row['commission_today_paise'] ?? 0),
         ], $meta);

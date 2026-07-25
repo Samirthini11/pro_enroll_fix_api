@@ -26,10 +26,10 @@ final class PlatformSettingsRepository
         $this->db = Database::connection();
     }
 
-    /** Platform cut on visit fee (0–100). Default 5. */
+    /** Platform cut on visit fee (0–100). Default 10. Deducted from prepaid wallet. */
     public function visitCommissionPercent(): int
     {
-        $v = (int) $this->get('visit_commission_percent', (string) (Config::get('VISIT_COMMISSION_PERCENT') ?? '5'));
+        $v = (int) $this->get('visit_commission_percent', (string) (Config::get('VISIT_COMMISSION_PERCENT') ?? '10'));
 
         return max(0, min(100, $v));
     }
@@ -79,18 +79,30 @@ final class PlatformSettingsRepository
     }
 
     /**
-     * Minimum net wallet (credits − unpaid platform fee) allowed to accept jobs.
-     * Default −₹200 (−20000 paise). Set in platform_settings / .env.
+     * Minimum prepaid wallet balance required to accept jobs (after free tier).
+     * Default ₹50 (5000 paise).
      */
     public function walletMinAcceptPaise(): int
     {
         $v = (int) $this->get(
             'wallet_min_accept_paise',
-            (string) (Config::get('WALLET_MIN_ACCEPT_PAISE') ?? '-20000'),
+            (string) (Config::get('WALLET_MIN_ACCEPT_PAISE') ?? '5000'),
         );
 
-        // Clamp to a sane range (−₹10,000 … ₹0).
-        return max(-1000000, min(0, $v));
+        // Clamp to a sane range (₹0 … ₹10,000).
+        return max(0, min(1000000, $v));
+    }
+
+    /** Minimum UPI recharge amount. Default ₹50 (5000 paise). */
+    public function walletRechargeMinPaise(): int
+    {
+        $v = (int) $this->get(
+            'wallet_recharge_min_paise',
+            (string) (Config::get('WALLET_RECHARGE_MIN_PAISE') ?? '5000'),
+        );
+        $minAccept = $this->walletMinAcceptPaise();
+
+        return max($minAccept > 0 ? $minAccept : 5000, min(10000000, $v));
     }
 
     /** Min visit fee in paise. Default ₹50 (5000). */
@@ -111,7 +123,7 @@ final class PlatformSettingsRepository
         return max($this->visitFeeMinPaise(), min($this->visitFeeMaxPaise(), $paise));
     }
 
-    /** Company UPI where professionals pay platform fee. */
+    /** Company UPI where professionals recharge wallet / pay platform fee. */
     public function companyUpiId(): string
     {
         $v = trim($this->get(
@@ -145,7 +157,7 @@ final class PlatformSettingsRepository
             'pn' => $this->companyUpiName(),
             'am' => $am,
             'cu' => 'INR',
-            'tn' => $note ?? 'Pro Enroll platform fee',
+            'tn' => $note ?? 'Pro Enroll wallet recharge',
         ];
 
         return 'upi://pay?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
@@ -162,6 +174,7 @@ final class PlatformSettingsRepository
             'visit_fee_max_paise' => $this->visitFeeMaxPaise(),
             'awaiting_payment_auto_complete_hours' => $this->awaitingPaymentAutoCompleteHours(),
             'wallet_min_accept_paise' => $this->walletMinAcceptPaise(),
+            'wallet_recharge_min_paise' => $this->walletRechargeMinPaise(),
             'company_upi_id' => $this->companyUpiId(),
             'company_upi_name' => $this->companyUpiName(),
         ];
