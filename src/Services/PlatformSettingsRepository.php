@@ -34,6 +34,20 @@ final class PlatformSettingsRepository
         return max(0, min(100, $v));
     }
 
+    /**
+     * Charge a wallet penalty (= commission % of visit fee) when a pro rejects
+     * a job while already on the way (en_route). Default on.
+     */
+    public function lateRejectPenaltyEnabled(): bool
+    {
+        $raw = $this->get(
+            'late_reject_penalty_enabled',
+            (string) (Config::get('LATE_REJECT_PENALTY_ENABLED') ?? '1'),
+        );
+
+        return in_array(strtolower($raw), ['1', 'true', 'yes', 'on'], true);
+    }
+
     /** First N completed bookings with zero commission. Default 5. */
     public function freeBookingLimit(): int
     {
@@ -168,6 +182,7 @@ final class PlatformSettingsRepository
     {
         return [
             'visit_commission_percent' => $this->visitCommissionPercent(),
+            'late_reject_penalty_enabled' => $this->lateRejectPenaltyEnabled(),
             'free_booking_limit' => $this->freeBookingLimit(),
             'hold_pro_after_free_limit' => $this->holdProAfterFreeLimit(),
             'visit_fee_min_paise' => $this->visitFeeMinPaise(),

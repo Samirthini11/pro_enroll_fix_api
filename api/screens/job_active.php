@@ -179,9 +179,24 @@ final class JobActiveScreen extends ScreenHandler
             if ($action === 'cancel' || $action === 'reject') {
                 $rowBefore = $bookings->findActiveForProfessional($proId, $bookingId)
                     ?? $bookings->findById($bookingId);
-                if (!$bookings->cancelByProfessional($bookingId, $proId)) {
+                $reason = trim((string) $request->input('reason', ''));
+
+                // Rejecting while on the way requires a reason.
+                if ($rowBefore !== null
+                    && BookingRepository::rejectRequiresReason((string) ($rowBefore['status'] ?? ''))
+                    && $reason === ''
+                ) {
                     Response::fail(
-                        'You can cancel only before the scheduled work start time.',
+                        'Please choose a reason for rejecting this job.',
+                        422,
+                        'reason_required',
+                    );
+                    return;
+                }
+
+                if (!$bookings->cancelByProfessional($bookingId, $proId, $reason !== '' ? $reason : null)) {
+                    Response::fail(
+                        'You can reject only before you mark arrived at the customer location.',
                         400,
                         'cannot_cancel',
                     );

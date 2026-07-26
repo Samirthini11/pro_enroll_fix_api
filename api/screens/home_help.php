@@ -26,7 +26,7 @@ final class HomeHelpScreen extends ScreenHandler
             'faq' => [
                 ['q' => 'When do I get paid?', 'a' => 'Visit fees are paid out daily by 7 PM to your UPI.'],
                 ['q' => 'How is KYC verified?', 'a' => 'Aadhaar OTP + live selfie; review within 24 hours.'],
-                ['q' => 'Can I reject a job?', 'a' => 'Yes — reject open offers anytime, or cancel an accepted job before the scheduled work start time.'],
+                ['q' => 'Can I reject a job?', 'a' => 'Yes — reject open offers anytime, and you can still reject an accepted job while you are on the way. Once you mark arrived, the job must be completed.'],
             ],
             'support_phone' => '+914132000000',
             'support_whatsapp' => '+919876543210',

@@ -185,6 +185,53 @@ final class WalletLedgerRepository
     }
 
     /**
+     * Debit a late-reject penalty (pro rejected while on the way) from the wallet.
+     * Idempotent per booking. Returns false if ledger missing or already charged.
+     */
+    public function debitLateRejectPenalty(int $professionalId, int $bookingId, int $amountPaise): bool
+    {
+        if (!$this->tableExists() || $amountPaise <= 0) {
+            return false;
+        }
+
+        $exists = $this->db->prepare(
+            "SELECT id FROM pro_wallet_ledger
+             WHERE booking_id = ? AND entry_type = 'late_reject_penalty' LIMIT 1"
+        );
+        $exists->execute([$bookingId]);
+        if ($exists->fetch()) {
+            return true; // already charged
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $balance = $this->balancePaise($professionalId);
+            $after = $balance - $amountPaise;
+            $stmt = $this->db->prepare(
+                'INSERT INTO pro_wallet_ledger
+                    (professional_id, entry_type, amount_paise, balance_after_paise, booking_id, utr, note, created_at)
+                 VALUES (?, ?, ?, ?, ?, NULL, ?, NOW())'
+            );
+            $stmt->execute([
+                $professionalId,
+                'late_reject_penalty',
+                -$amountPaise,
+                $after,
+                $bookingId,
+                'Penalty for rejecting a job while on the way',
+            ]);
+            $this->db->commit();
+
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     public function history(int $professionalId, int $limit = 50): array
@@ -218,6 +265,7 @@ final class WalletLedgerRepository
             $label = match ($type) {
                 'recharge' => 'Wallet recharge',
                 'commission_debit' => 'Platform fee deducted',
+                'late_reject_penalty' => 'Late reject penalty',
                 default => ucwords(str_replace('_', ' ', $type)),
             };
             if (!empty($row['booking_code'])) {

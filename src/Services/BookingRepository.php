@@ -770,15 +770,15 @@ final class BookingRepository
     }
 
     /**
-     * Pro may reject an open offer anytime, or cancel an accepted job
-     * before the scheduled work start time (and before arrival / work start).
+     * Pro may reject an open offer anytime, or cancel an accepted job while
+     * still on the way. Once arrived / working, cancelling is no longer allowed.
      */
     public function rejectOffer(int $bookingId, int $professionalId): bool
     {
         return $this->cancelByProfessional($bookingId, $professionalId);
     }
 
-    public function cancelByProfessional(int $bookingId, int $professionalId): bool
+    public function cancelByProfessional(int $bookingId, int $professionalId, ?string $reason = null): bool
     {
         $booking = $this->findById($bookingId);
         if ($booking === null || (int) $booking['professional_id'] !== $professionalId) {
@@ -786,41 +786,116 @@ final class BookingRepository
         }
 
         $status = (string) ($booking['status'] ?? '');
-        if ($status === 'confirmed') {
-            // Open offer — reject anytime before the pro starts the job.
-        } elseif ($status === 'en_route') {
-            $scheduled = strtotime((string) ($booking['scheduled_at'] ?? ''));
-            if ($scheduled === false || time() >= $scheduled) {
-                return false;
-            }
-        } else {
+        if (!self::isProfessionalCancellableStatus($status)) {
             return false;
         }
 
-        $stmt = $this->db->prepare(
-            "UPDATE service_bookings
-             SET status = 'cancelled', updated_at = NOW()
-             WHERE id = ? AND professional_id = ?
-               AND status IN ('confirmed', 'en_route')"
-        );
-        $stmt->execute([$bookingId, $professionalId]);
+        $isLateReject = $status === 'en_route';
+        $reason = $reason !== null ? trim($reason) : null;
+        if ($reason === '') {
+            $reason = null;
+        }
 
-        return $stmt->rowCount() > 0;
+        if ($this->hasCancelReasonColumn()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'cancelled', cancel_reason = ?, updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('confirmed', 'en_route')"
+            );
+            $stmt->execute([$reason, $bookingId, $professionalId]);
+        } else {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'cancelled', updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('confirmed', 'en_route')"
+            );
+            $stmt->execute([$bookingId, $professionalId]);
+        }
+
+        if ($stmt->rowCount() === 0) {
+            return false;
+        }
+
+        // Charge the wallet penalty for rejecting after heading out.
+        if ($isLateReject) {
+            $penalty = $this->lateRejectPenaltyPaise($booking);
+            if ($penalty > 0) {
+                $ledger = new WalletLedgerRepository();
+                if ($ledger->tableExists()) {
+                    try {
+                        $ledger->debitLateRejectPenalty($professionalId, $bookingId, $penalty);
+                        $this->syncListingHoldForWallet($professionalId);
+                    } catch (\Throwable) {
+                        // Penalty is best-effort; low balance is caught by listing hold.
+                    }
+                }
+            }
+        }
+
+        return true;
     }
 
-    /** Whether the pro can still cancel this active job (before scheduled start). */
+    /** Whether the pro can still cancel: open offer, or on the way. */
     public function canProfessionalCancel(array $row): bool
     {
-        $status = (string) ($row['status'] ?? '');
-        if ($status === 'confirmed') {
-            return true;
-        }
-        if ($status !== 'en_route') {
-            return false;
-        }
-        $scheduled = strtotime((string) ($row['scheduled_at'] ?? ''));
+        return self::isProfessionalCancellableStatus((string) ($row['status'] ?? ''));
+    }
 
-        return $scheduled !== false && time() < $scheduled;
+    private static function isProfessionalCancellableStatus(string $status): bool
+    {
+        return in_array($status, ['confirmed', 'en_route'], true);
+    }
+
+    /** Late reject (en_route) requires a reason from the professional. */
+    public static function rejectRequiresReason(string $status): bool
+    {
+        return $status === 'en_route';
+    }
+
+    /**
+     * Wallet penalty (in paise) for rejecting this booking now.
+     * Only applies while on the way (en_route) and when the toggle is on.
+     *
+     * @param array<string, mixed> $row
+     */
+    public function lateRejectPenaltyPaise(array $row): int
+    {
+        if ((string) ($row['status'] ?? '') !== 'en_route') {
+            return 0;
+        }
+
+        $settings = new PlatformSettingsRepository();
+        if (!$settings->lateRejectPenaltyEnabled()) {
+            return 0;
+        }
+
+        $percent = $settings->visitCommissionPercent();
+        $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
+        if ($percent <= 0 || $visitFee <= 0) {
+            return 0;
+        }
+
+        return (int) round($visitFee * $percent / 100);
+    }
+
+    private ?bool $hasCancelReason = null;
+
+    private function hasCancelReasonColumn(): bool
+    {
+        if ($this->hasCancelReason !== null) {
+            return $this->hasCancelReason;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'cancel_reason'");
+            $this->hasCancelReason = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $this->hasCancelReason = false;
+        }
+
+        return $this->hasCancelReason;
     }
 
     public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
@@ -1505,6 +1580,8 @@ final class BookingRepository
                 ? IstTime::format((string) $row['updated_at'])
                 : null,
             'can_cancel' => $this->canProfessionalCancel($row),
+            'reject_requires_reason' => self::rejectRequiresReason((string) ($row['status'] ?? '')),
+            'reject_penalty_paise' => $this->lateRejectPenaltyPaise($row),
         ];
     }
 
