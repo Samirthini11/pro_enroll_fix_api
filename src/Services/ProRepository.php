@@ -353,6 +353,10 @@ final class ProRepository
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
 
+        // City-only search: use city center for distance labels/sorting, but do NOT
+        // drop pros by work-radius (that wrongly hides e.g. Tindivanam after switching
+        // from Pondicherry). Radius enforce is only for live GPS "near me" search.
+        $hadCustomerGps = $useGeo;
         if ($customerLat === null || $customerLng === null) {
             $city = \ProEnroll\Api\ReferenceData::cityById($cityId);
             if ($city !== null) {
@@ -368,7 +372,7 @@ final class ProRepository
                 $categoryCode,
                 $customerLat,
                 $customerLng,
-                enforceRadius: true,
+                enforceRadius: $hadCustomerGps,
             );
             if ($item !== null) {
                 $out[] = $item;
