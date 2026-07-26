@@ -9,6 +9,7 @@ use ProEnroll\Api\Endpoints\Admin\AdminDashboardEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDocumentsEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminKycEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminProfessionalsEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminWalletRechargesEndpoint;
 use ProEnroll\Api\Endpoints\Auth\AdminLoginEndpoint;
 use ProEnroll\Api\Endpoints\Auth\FirebaseSessionEndpoint;
 use ProEnroll\Api\Endpoints\Auth\LogoutEndpoint;
@@ -109,6 +110,7 @@ final class Router
         'GET /v1/admin/documents' => AdminDocumentsEndpoint::class,
         'GET /v1/admin/professionals' => AdminProfessionalsEndpoint::class,
         'GET /v1/admin/customers' => AdminCustomersEndpoint::class,
+        'GET /v1/admin/wallet-recharges' => AdminWalletRechargesEndpoint::class,
     ];
 
     public static function dispatch(Request $request): void
@@ -203,6 +205,11 @@ final class Router
 
         if (preg_match('#^GET /v1/admin/customers/(\d+)$#', $key, $m)) {
             (new AdminCustomersEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
+        if (preg_match('#^POST /v1/admin/wallet-recharges/(\d+)/(approve|reject)$#', $key, $m)) {
+            (new AdminWalletRechargesEndpoint())->handle($request, (int) $m[1], $m[2]);
             return;
         }
 

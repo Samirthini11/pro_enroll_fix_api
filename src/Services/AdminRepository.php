@@ -70,6 +70,7 @@ final class AdminRepository
         return [
             'kyc_pending' => $kycPending,
             'docs_pending' => $docsPending,
+            'wallet_recharges_pending' => (new WalletRechargeRepository())->pendingCount(),
             'approved_today' => $approvedToday,
             'rejected_today' => $rejectedToday,
             'total_verified_pros' => $totalVerified,

@@ -10,12 +10,13 @@ use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Services\BookingRepository;
 use ProEnroll\Api\Services\PlatformSettingsRepository;
 use ProEnroll\Api\Services\WalletLedgerRepository;
+use ProEnroll\Api\Services\WalletRechargeRepository;
 
 /**
  * Flutter: WalletTab + EarningsTab
  * GET  /v1/screens/home-earnings
  * POST /v1/screens/home-earnings
- *   { "action": "recharge_wallet", "amount_paise": 5000, "utr": "..." }
+ *   { "action": "recharge_wallet", "amount_paise": 5000, "utr": "..." }  // pending admin approval
  *   { "action": "mark_platform_fee_paid", "utr": "..." }  // legacy unpaid fee clear
  */
 final class HomeEarningsScreen extends ScreenHandler
@@ -52,11 +53,15 @@ final class HomeEarningsScreen extends ScreenHandler
             ? $walletHistory
             : $bookings->creditHistoryForProfessional($proId);
 
+        $recharges = new WalletRechargeRepository();
+        $summary['pending_recharge_paise'] = $recharges->pendingAmountPaise($proId);
+
         return [
             'screen' => 'home_earnings',
             'summary' => $summary,
             'credit_history' => $creditHistory,
             'wallet_history' => $walletHistory,
+            'recharge_requests' => $recharges->listForProfessional($proId),
             'rating_avg' => (float) ($pro['rating_avg'] ?? 0),
             'rating_count' => (int) ($pro['rating_count'] ?? 0),
             'jobs_completed' => (int) ($pro['jobs_completed'] ?? 0),
@@ -100,8 +105,9 @@ final class HomeEarningsScreen extends ScreenHandler
                     return;
                 }
                 try {
-                    $result = $ledger->recharge($proId, $amountPaise, $utr);
-                    $bookings->syncListingHoldForWallet($proId);
+                    // Wallet is credited only after an admin approves this request.
+                    $submitted = (new WalletRechargeRepository())
+                        ->submit($proId, $amountPaise, $utr);
                 } catch (\InvalidArgumentException $e) {
                     Response::fail($e->getMessage(), 422, 'validation');
                     return;
@@ -112,7 +118,8 @@ final class HomeEarningsScreen extends ScreenHandler
 
                 $pro = $this->proRow($request) ?? $pro;
                 $out = $this->payload($bookings, $ledger, $proId, $pro);
-                $out['recharged'] = $result;
+                $out['recharge_request'] = $submitted;
+                $out['message'] = 'Recharge submitted. Wallet is credited after admin approval.';
                 $out['utr'] = strtoupper(preg_replace('/\s+/', '', $utr) ?? $utr);
                 Response::ok($out);
                 return;

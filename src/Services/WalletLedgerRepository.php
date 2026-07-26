@@ -55,12 +55,17 @@ final class WalletLedgerRepository
     }
 
     /**
-     * Credit wallet after company UPI payment (UTR required).
+     * Credit wallet after an admin-approved company UPI payment (UTR required).
      *
      * @return array{id: int, balance_paise: int, amount_paise: int}
      */
-    public function recharge(int $professionalId, int $amountPaise, string $utr, ?string $note = null): array
-    {
+    public function recharge(
+        int $professionalId,
+        int $amountPaise,
+        string $utr,
+        ?string $note = null,
+        ?int $rechargeId = null,
+    ): array {
         if (!$this->tableExists()) {
             throw new \RuntimeException('Wallet ledger is not available');
         }
@@ -86,19 +91,36 @@ final class WalletLedgerRepository
         try {
             $balance = $this->balancePaise($professionalId);
             $after = $balance + $amountPaise;
-            $stmt = $this->db->prepare(
-                'INSERT INTO pro_wallet_ledger
-                    (professional_id, entry_type, amount_paise, balance_after_paise, booking_id, utr, note, created_at)
-                 VALUES (?, ?, ?, ?, NULL, ?, ?, NOW())'
-            );
-            $stmt->execute([
-                $professionalId,
-                'recharge',
-                $amountPaise,
-                $after,
-                $utr,
-                $note ?? 'Wallet recharge via company UPI',
-            ]);
+            if ($this->hasRechargeIdColumn()) {
+                $stmt = $this->db->prepare(
+                    'INSERT INTO pro_wallet_ledger
+                        (professional_id, entry_type, amount_paise, balance_after_paise, booking_id, recharge_id, utr, note, created_at)
+                     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NOW())'
+                );
+                $stmt->execute([
+                    $professionalId,
+                    'recharge',
+                    $amountPaise,
+                    $after,
+                    $rechargeId,
+                    $utr,
+                    $note ?? 'Wallet recharge via company UPI',
+                ]);
+            } else {
+                $stmt = $this->db->prepare(
+                    'INSERT INTO pro_wallet_ledger
+                        (professional_id, entry_type, amount_paise, balance_after_paise, booking_id, utr, note, created_at)
+                     VALUES (?, ?, ?, ?, NULL, ?, ?, NOW())'
+                );
+                $stmt->execute([
+                    $professionalId,
+                    'recharge',
+                    $amountPaise,
+                    $after,
+                    $utr,
+                    $note ?? 'Wallet recharge via company UPI',
+                ]);
+            }
             $id = (int) $this->db->lastInsertId();
             $this->db->commit();
 
@@ -219,6 +241,22 @@ final class WalletLedgerRepository
         }
 
         return $out;
+    }
+
+    private function hasRechargeIdColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM pro_wallet_ledger LIKE 'recharge_id'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
     }
 
     private function normalizeUtr(string $utr): string
