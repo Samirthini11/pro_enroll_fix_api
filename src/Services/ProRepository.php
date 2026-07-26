@@ -280,6 +280,7 @@ final class ProRepository
         ?float $customerLat = null,
         ?float $customerLng = null,
         ?int $excludeCustomerId = null,
+        ?int $excludeProfessionalId = null,
     ): array {
         $useGeo = $customerLat !== null && $customerLng !== null;
 
@@ -312,6 +313,13 @@ final class ProRepository
             $params[] = $excludeCustomerId;
         }
 
+        // Same phone / dual-role user: never list yourself when booking a service.
+        $selfFilter = '';
+        if ($excludeProfessionalId !== null && $excludeProfessionalId > 0) {
+            $selfFilter = ' AND p.id <> ?';
+            $params[] = $excludeProfessionalId;
+        }
+
         $sql = 'SELECT DISTINCT p.* FROM professionals p
                 INNER JOIN professional_skills ps ON ps.professional_id = p.id
                 WHERE p.full_name IS NOT NULL
@@ -319,7 +327,8 @@ final class ProRepository
                   AND p.kyc_status = \'verified\''
             . $heldFilter
             . $presenceFilter
-            . $busyProFilter;
+            . $busyProFilter
+            . $selfFilter;
 
         if (!$useGeo) {
             $sql .= ' AND p.city_id = ?';

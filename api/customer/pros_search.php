@@ -37,14 +37,23 @@ final class ProsSearchEndpoint
         $lat = is_numeric($rawLat) ? (float) $rawLat : null;
         $lng = is_numeric($rawLng) ? (float) $rawLng : null;
 
-        // Optional auth: when logged-in customer, hide pros they already booked (in process).
+        $pros = new ProRepository();
+
+        // Optional auth: hide busy pros + hide the caller's own professional profile.
         $excludeCustomerId = null;
+        $excludeProfessionalId = null;
         if (JwtTokenMiddleware::optional($request)) {
             $auth = new AuthService();
             $excludeCustomerId = $auth->resolveCustomerId($request);
+            $phone = (string) ($request->authUser['phone'] ?? '');
+            if ($phone !== '') {
+                $selfPro = $pros->findByPhone($phone);
+                if ($selfPro !== null) {
+                    $excludeProfessionalId = (int) $selfPro['id'];
+                }
+            }
         }
 
-        $pros = new ProRepository();
         $results = $pros->searchForCustomer(
             $cityId,
             $category,
@@ -52,6 +61,7 @@ final class ProsSearchEndpoint
             $lat,
             $lng,
             $excludeCustomerId,
+            $excludeProfessionalId,
         );
 
         foreach ($results as &$r) {

@@ -769,16 +769,58 @@ final class BookingRepository
         ];
     }
 
+    /**
+     * Pro may reject an open offer anytime, or cancel an accepted job
+     * before the scheduled work start time (and before arrival / work start).
+     */
     public function rejectOffer(int $bookingId, int $professionalId): bool
     {
+        return $this->cancelByProfessional($bookingId, $professionalId);
+    }
+
+    public function cancelByProfessional(int $bookingId, int $professionalId): bool
+    {
+        $booking = $this->findById($bookingId);
+        if ($booking === null || (int) $booking['professional_id'] !== $professionalId) {
+            return false;
+        }
+
+        $status = (string) ($booking['status'] ?? '');
+        if ($status === 'confirmed') {
+            // Open offer — reject anytime before the pro starts the job.
+        } elseif ($status === 'en_route') {
+            $scheduled = strtotime((string) ($booking['scheduled_at'] ?? ''));
+            if ($scheduled === false || time() >= $scheduled) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
         $stmt = $this->db->prepare(
             "UPDATE service_bookings
              SET status = 'cancelled', updated_at = NOW()
-             WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
+             WHERE id = ? AND professional_id = ?
+               AND status IN ('confirmed', 'en_route')"
         );
         $stmt->execute([$bookingId, $professionalId]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    /** Whether the pro can still cancel this active job (before scheduled start). */
+    public function canProfessionalCancel(array $row): bool
+    {
+        $status = (string) ($row['status'] ?? '');
+        if ($status === 'confirmed') {
+            return true;
+        }
+        if ($status !== 'en_route') {
+            return false;
+        }
+        $scheduled = strtotime((string) ($row['scheduled_at'] ?? ''));
+
+        return $scheduled !== false && time() < $scheduled;
     }
 
     public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
@@ -1386,7 +1428,8 @@ final class BookingRepository
             'distance_km' => self::distanceKm($row, $proLat, $proLng),
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
             'preferred_time' => IstTime::formatTs($scheduled),
-            'expires_at' => IstTime::formatTs($created + 3600),
+            // Pro can accept/reject until the scheduled work start time.
+            'expires_at' => IstTime::formatTs($scheduled),
             'created_at' => IstTime::formatTs($created),
             'commission_preview' => $this->commissionPreviewForPro((int) $row['professional_id'], (int) $row['visit_fee_paise']),
         ];
@@ -1452,12 +1495,16 @@ final class BookingRepository
             'pro_credit_paise' => isset($row['pro_credit_paise']) && $row['pro_credit_paise'] !== null
                 ? (int) $row['pro_credit_paise'] : null,
             'commission_paise' => (int) ($row['commission_paise'] ?? 0),
+            'scheduled_at' => !empty($row['scheduled_at'])
+                ? IstTime::format((string) $row['scheduled_at'])
+                : null,
             'accepted_at' => !empty($row['accepted_at'])
                 ? IstTime::format((string) $row['accepted_at'])
                 : null,
             'updated_at' => !empty($row['updated_at'])
                 ? IstTime::format((string) $row['updated_at'])
                 : null,
+            'can_cancel' => $this->canProfessionalCancel($row),
         ];
     }
 

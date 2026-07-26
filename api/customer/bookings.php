@@ -88,6 +88,21 @@ final class BookingsEndpoint
                 return;
             }
 
+            // Dual-role: cannot book yourself.
+            $callerPhone = (string) ($request->authUser['phone'] ?? '');
+            $proPhone = (string) ($pro['phone_e164'] ?? '');
+            if ($callerPhone !== '' && $proPhone !== '') {
+                $selfPro = $pros->findByPhone($callerPhone);
+                if ($selfPro !== null && (int) $selfPro['id'] === $proId) {
+                    Response::fail(
+                        'You cannot book yourself. Choose another professional.',
+                        422,
+                        'cannot_book_self',
+                    );
+                    return;
+                }
+            }
+
             try {
                 [$addressLat, $addressLng] = BookingRepository::parseGeoInput(
                     $request->input('address_lat'),

@@ -176,6 +176,28 @@ final class JobActiveScreen extends ScreenHandler
         if ($request->method === 'POST') {
             $action = strtolower(trim((string) $request->input('action', 'complete')));
 
+            if ($action === 'cancel' || $action === 'reject') {
+                $rowBefore = $bookings->findActiveForProfessional($proId, $bookingId)
+                    ?? $bookings->findById($bookingId);
+                if (!$bookings->cancelByProfessional($bookingId, $proId)) {
+                    Response::fail(
+                        'You can cancel only before the scheduled work start time.',
+                        400,
+                        'cannot_cancel',
+                    );
+                    return;
+                }
+                if ($rowBefore !== null) {
+                    BookingPushNotifier::rejectedForCustomer($rowBefore, $pro);
+                }
+                Response::ok([
+                    'screen' => 'job_active',
+                    'cancelled' => true,
+                    'active_job' => null,
+                ]);
+                return;
+            }
+
             if ($action === 'confirm_payment' || $action === 'payment_received') {
                 $method = strtolower(trim((string) $request->input('payment_method', 'cash')));
                 $row = $bookings->confirmPaymentReceivedForProfessional($bookingId, $proId, $method);
