@@ -7,6 +7,7 @@ namespace ProEnroll\Api\Endpoints\Screens;
 use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
+use ProEnroll\Api\Services\BookingRepository;
 
 /**
  * Flutter: ProfileTab
@@ -22,9 +23,11 @@ final class HomeProfileScreen extends ScreenHandler
         }
 
         $uid = $this->uid($request);
-        $this->ensurePro($request);
+        $pro = $this->ensurePro($request);
 
         if ($request->method === 'GET') {
+            // Self-heal stale holds after an approved wallet recharge.
+            (new BookingRepository())->syncListingHoldForWallet((int) $pro['id']);
             // Presence heartbeat when Jobs screen refreshes while online.
             $this->pros->touchPresence($uid);
             Response::ok([
@@ -44,9 +47,13 @@ final class HomeProfileScreen extends ScreenHandler
             if (array_key_exists('is_available', $request->body)) {
                 $wantOnline = (bool) $request->body['is_available'];
                 $pro = $this->proRow($request);
+                if ($wantOnline && $pro !== null) {
+                    (new BookingRepository())->syncListingHoldForWallet((int) $pro['id']);
+                    $pro = $this->proRow($request);
+                }
                 if ($wantOnline && $pro !== null && !empty($pro['listing_held'])) {
                     Response::fail(
-                        'Your free bookings are used up. Listing is on hold — contact support to continue receiving jobs.',
+                        'Wallet balance is below ₹50. Recharge your wallet and wait for admin approval to continue receiving jobs.',
                         403,
                         'listing_held',
                     );
