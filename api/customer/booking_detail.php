@@ -43,11 +43,21 @@ final class BookingDetailEndpoint
                 return;
             }
             if (!$bookings->cancelForCustomer($bookingId, $customerId)) {
-                Response::fail(
-                    'Cannot cancel after the technician is on the way',
-                    400,
-                    'invalid_state',
-                );
+                if ($bookings->customerDailyCancelsRemaining($customerId) <= 0) {
+                    Response::fail(
+                        $bookings->dailyCancelLimitMessage('customer'),
+                        400,
+                        'daily_cancel_limit',
+                    );
+                    return;
+                }
+                $status = (string) ($before['status'] ?? '');
+                $msg = $status === 'en_route'
+                    ? 'Cancel unlocks after the technician stays in the same place for '
+                        . BookingRepository::STUCK_CANCEL_MINUTES
+                        . ' minutes'
+                    : 'Cannot cancel this booking in its current state';
+                Response::fail($msg, 400, 'invalid_state');
                 return;
             }
             $row = $bookings->findByIdForCustomer($bookingId, $customerId);

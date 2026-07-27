@@ -167,6 +167,15 @@ final class JobOfferScreen extends ScreenHandler
 
         if ($request->method === 'POST' && str_ends_with($request->path, '/reject')) {
 
+            if ($bookings->professionalDailyCancelsRemaining($proId) <= 0) {
+                Response::fail(
+                    $bookings->dailyCancelLimitMessage('professional'),
+                    400,
+                    'daily_cancel_limit',
+                );
+                return;
+            }
+
             $offerRow = $bookings->findOfferForProfessional($bookingId, $proId);
             if (!$bookings->rejectOffer($bookingId, $proId)) {
 

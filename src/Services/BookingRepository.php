@@ -22,6 +22,21 @@ final class BookingRepository
     /** @var bool|null Cached schema probe for commission columns. */
     private static ?bool $hasCommissionColumns = null;
 
+    /** @var bool|null Cached schema probe for stuck-en-route tracking columns. */
+    private static ?bool $hasProStuckTrackColumns = null;
+
+    /** Minutes a technician may stay put after accept before customer can cancel. */
+    public const STUCK_CANCEL_MINUTES = 10;
+
+    /** Max cancellations / rejects per IST calendar day (each side). */
+    public const DAILY_CANCEL_LIMIT = 5;
+
+    /** Movement (km) that resets the stuck timer (~100 m). */
+    private const STUCK_MOVE_THRESHOLD_KM = 0.1;
+
+    /** @var bool|null Cached schema probe for cancelled_by / cancelled_at. */
+    private static ?bool $hasCancelledByColumns = null;
+
     public function __construct()
     {
         $this->db = Database::connection();
@@ -93,18 +108,220 @@ final class BookingRepository
     }
 
     /**
-     * Customer may cancel only before the pro is on the way (status still confirmed).
+     * Customer may cancel while waiting for accept (confirmed), or while en_route
+     * if the technician has not meaningfully moved for STUCK_CANCEL_MINUTES.
+     * Also blocked after DAILY_CANCEL_LIMIT cancels today.
      */
     public function cancelForCustomer(int $bookingId, int $customerId): bool
     {
-        $stmt = $this->db->prepare(
-            'UPDATE service_bookings
-             SET status = ?, updated_at = NOW()
-             WHERE id = ? AND customer_id = ?
-               AND status = \'confirmed\''
-        );
-        $stmt->execute(['cancelled', $bookingId, $customerId]);
+        $row = $this->findByIdForCustomer($bookingId, $customerId);
+        if ($row === null || !$this->canCustomerCancel($row)) {
+            return false;
+        }
+
+        $status = (string) ($row['status'] ?? '');
+        if (!in_array($status, ['confirmed', 'en_route'], true)) {
+            return false;
+        }
+
+        if ($this->hasCancelledByColumns()) {
+            $stmt = $this->db->prepare(
+                'UPDATE service_bookings
+                 SET status = ?, cancelled_by = ?, cancelled_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND customer_id = ?
+                   AND status = ?'
+            );
+            $stmt->execute(['cancelled', 'customer', $bookingId, $customerId, $status]);
+        } else {
+            $stmt = $this->db->prepare(
+                'UPDATE service_bookings
+                 SET status = ?, updated_at = NOW()
+                 WHERE id = ? AND customer_id = ?
+                   AND status = ?'
+            );
+            $stmt->execute(['cancelled', $bookingId, $customerId, $status]);
+        }
+
         return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function canCustomerCancel(array $row): bool
+    {
+        $customerId = (int) ($row['customer_id'] ?? 0);
+        if ($customerId > 0 && $this->customerDailyCancelsRemaining($customerId) <= 0) {
+            return false;
+        }
+
+        $status = (string) ($row['status'] ?? '');
+        if ($status === 'confirmed') {
+            return true;
+        }
+        if ($status !== 'en_route') {
+            return false;
+        }
+
+        return $this->stuckMinutes($row) >= self::STUCK_CANCEL_MINUTES;
+    }
+
+    public function customerDailyCancelCount(int $customerId): int
+    {
+        return $this->dailyCancelCount('customer', $customerId);
+    }
+
+    public function customerDailyCancelsRemaining(int $customerId): int
+    {
+        return max(0, self::DAILY_CANCEL_LIMIT - $this->customerDailyCancelCount($customerId));
+    }
+
+    public function professionalDailyCancelCount(int $professionalId): int
+    {
+        return $this->dailyCancelCount('professional', $professionalId);
+    }
+
+    public function professionalDailyCancelsRemaining(int $professionalId): int
+    {
+        return max(0, self::DAILY_CANCEL_LIMIT - $this->professionalDailyCancelCount($professionalId));
+    }
+
+    /**
+     * @param 'customer'|'professional' $by
+     */
+    private function dailyCancelCount(string $by, int $actorId): int
+    {
+        if ($actorId <= 0 || !$this->hasCancelledByColumns()) {
+            return 0;
+        }
+
+        [$dayStart, $dayEnd] = $this->istDayBoundsMysql();
+        if ($by === 'customer') {
+            $stmt = $this->db->prepare(
+                "SELECT COUNT(*) FROM service_bookings
+                 WHERE customer_id = ?
+                   AND status = 'cancelled'
+                   AND cancelled_by = 'customer'
+                   AND cancelled_at >= ? AND cancelled_at < ?"
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                "SELECT COUNT(*) FROM service_bookings
+                 WHERE professional_id = ?
+                   AND status = 'cancelled'
+                   AND cancelled_by = 'professional'
+                   AND cancelled_at >= ? AND cancelled_at < ?"
+            );
+        }
+        $stmt->execute([$actorId, $dayStart, $dayEnd]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** @return array{0: string, 1: string} [startMysql, endMysql) in IST */
+    private function istDayBoundsMysql(): array
+    {
+        $tz = new \DateTimeZone(IstTime::ZONE);
+        $start = new \DateTimeImmutable('today', $tz);
+        $end = $start->modify('+1 day');
+
+        return [$start->format('Y-m-d H:i:s'), $end->format('Y-m-d H:i:s')];
+    }
+
+    public function dailyCancelLimitMessage(string $side = 'customer'): string
+    {
+        return 'You can cancel or reject at most '
+            . self::DAILY_CANCEL_LIMIT
+            . ' times per day. Try again tomorrow.';
+    }
+
+    /**
+     * Minutes since the technician last moved (or since accept if never moved).
+     *
+     * @param array<string, mixed> $row
+     */
+    public function stuckMinutes(array $row): int
+    {
+        $anchor = $this->stuckAnchorAt($row);
+        if ($anchor === null) {
+            return 0;
+        }
+        $seconds = max(0, time() - $anchor);
+
+        return (int) floor($seconds / 60);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function stuckAnchorAt(array $row): ?int
+    {
+        foreach (['pro_last_moved_at', 'accepted_at', 'updated_at'] as $key) {
+            if (!empty($row[$key])) {
+                $ts = strtotime((string) $row[$key]);
+                if ($ts !== false) {
+                    return $ts;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function customerCancelHint(array $row): ?string
+    {
+        $customerId = (int) ($row['customer_id'] ?? 0);
+        if ($customerId > 0 && $this->customerDailyCancelsRemaining($customerId) <= 0) {
+            return $this->dailyCancelLimitMessage('customer');
+        }
+
+        $status = (string) ($row['status'] ?? '');
+        if ($status === 'confirmed') {
+            $left = $this->customerDailyCancelsRemaining($customerId);
+
+            return 'You can cancel until the technician starts heading your way. '
+                . $left . '/' . self::DAILY_CANCEL_LIMIT . ' cancels left today.';
+        }
+        if ($status !== 'en_route') {
+            return null;
+        }
+        if ($this->canCustomerCancel($row)) {
+            return 'Technician has not moved for '
+                . self::STUCK_CANCEL_MINUTES
+                . '+ minutes. You can cancel and book another technician.';
+        }
+        $left = max(0, self::STUCK_CANCEL_MINUTES - $this->stuckMinutes($row));
+
+        return 'If the technician stays in the same place for '
+            . self::STUCK_CANCEL_MINUTES
+            . ' minutes, you can cancel. Available in about '
+            . $left
+            . ' min.';
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function customerCancelUnlockAt(array $row): ?string
+    {
+        $customerId = (int) ($row['customer_id'] ?? 0);
+        if ($customerId > 0 && $this->customerDailyCancelsRemaining($customerId) <= 0) {
+            return null;
+        }
+
+        $status = (string) ($row['status'] ?? '');
+        if ($status !== 'en_route' || $this->canCustomerCancel($row)) {
+            return null;
+        }
+        $anchor = $this->stuckAnchorAt($row);
+        if ($anchor === null) {
+            return null;
+        }
+
+        return IstTime::formatTs($anchor + (self::STUCK_CANCEL_MINUTES * 60));
     }
 
     private function hasVisitFeePaymentColumns(): bool
@@ -374,7 +591,11 @@ final class BookingRepository
                 'review_text' => $rating['review_text'],
             ],
             'can_rate' => $row['status'] === 'completed' && $rating === null,
-            'can_cancel' => $row['status'] === 'confirmed',
+            'can_cancel' => $this->canCustomerCancel($row),
+            'cancel_hint' => $this->customerCancelHint($row),
+            'cancel_unlock_at' => $this->customerCancelUnlockAt($row),
+            'cancels_remaining_today' => $this->customerDailyCancelsRemaining((int) ($row['customer_id'] ?? 0)),
+            'daily_cancel_limit' => self::DAILY_CANCEL_LIMIT,
             // Pay visit fee = customer confirmation; no separate Complete action.
             'can_mark_completed' => false,
             'can_pay_visit_fee' => empty($row['visit_fee_paid']) && ($row['status'] ?? '') === 'awaiting_payment',
@@ -430,7 +651,7 @@ final class BookingRepository
             return false;
         }
 
-        if (!in_array((string) $active['status'], ['en_route', 'arrived', 'in_progress'], true)) {
+        if (!in_array((string) $active['status'], ['en_route', 'arrived'], true)) {
             return false;
         }
 
@@ -439,9 +660,35 @@ final class BookingRepository
             return false;
         }
 
-        $this->db->prepare(
-            'UPDATE service_bookings SET updated_at = NOW() WHERE id = ? AND professional_id = ?'
-        )->execute([$bookingId, $professionalId]);
+        if ($this->hasProStuckTrackColumns() && (string) $active['status'] === 'en_route') {
+            $prevLat = isset($active['pro_track_lat']) && $active['pro_track_lat'] !== null
+                ? (float) $active['pro_track_lat'] : null;
+            $prevLng = isset($active['pro_track_lng']) && $active['pro_track_lng'] !== null
+                ? (float) $active['pro_track_lng'] : null;
+
+            if ($prevLat === null || $prevLng === null) {
+                // First fix: store baseline without resetting the accept timer.
+                $this->db->prepare(
+                    'UPDATE service_bookings
+                     SET pro_track_lat = ?, pro_track_lng = ?, updated_at = NOW()
+                     WHERE id = ? AND professional_id = ?'
+                )->execute([$lat, $lng, $bookingId, $professionalId]);
+            } elseif (ProRepository::haversineKm($prevLat, $prevLng, $lat, $lng) >= self::STUCK_MOVE_THRESHOLD_KM) {
+                $this->db->prepare(
+                    'UPDATE service_bookings
+                     SET pro_track_lat = ?, pro_track_lng = ?, pro_last_moved_at = NOW(), updated_at = NOW()
+                     WHERE id = ? AND professional_id = ?'
+                )->execute([$lat, $lng, $bookingId, $professionalId]);
+            } else {
+                $this->db->prepare(
+                    'UPDATE service_bookings SET updated_at = NOW() WHERE id = ? AND professional_id = ?'
+                )->execute([$bookingId, $professionalId]);
+            }
+        } else {
+            $this->db->prepare(
+                'UPDATE service_bookings SET updated_at = NOW() WHERE id = ? AND professional_id = ?'
+            )->execute([$bookingId, $professionalId]);
+        }
 
         return true;
     }
@@ -649,20 +896,33 @@ final class BookingRepository
 
     public function acceptOffer(int $bookingId, int $professionalId): ?array
     {
-        if ($this->hasAcceptedAtColumn()) {
-            $stmt = $this->db->prepare(
-                "UPDATE service_bookings
-                 SET status = 'en_route', accepted_at = NOW(), updated_at = NOW()
-                 WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
-            );
-        } else {
-            $stmt = $this->db->prepare(
-                "UPDATE service_bookings
-                 SET status = 'en_route', updated_at = NOW()
-                 WHERE id = ? AND professional_id = ? AND status = 'confirmed'"
-            );
+        $trackLat = null;
+        $trackLng = null;
+        $pros = new ProRepository();
+        $pro = $pros->findById($professionalId);
+        if ($pro !== null) {
+            [$trackLat, $trackLng] = ProRepository::resolveCoords($pro, 3600);
         }
-        $stmt->execute([$bookingId, $professionalId]);
+
+        $sets = ["status = 'en_route'", 'updated_at = NOW()'];
+        $params = [];
+        if ($this->hasAcceptedAtColumn()) {
+            $sets[] = 'accepted_at = NOW()';
+        }
+        if ($this->hasProStuckTrackColumns()) {
+            $sets[] = 'pro_last_moved_at = NOW()';
+            $sets[] = 'pro_track_lat = ?';
+            $sets[] = 'pro_track_lng = ?';
+            $params[] = $trackLat;
+            $params[] = $trackLng;
+        }
+        $sql = 'UPDATE service_bookings SET ' . implode(', ', $sets)
+            . ' WHERE id = ? AND professional_id = ? AND status = \'confirmed\'';
+        $params[] = $bookingId;
+        $params[] = $professionalId;
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
         if ($stmt->rowCount() === 0) {
             return null;
         }
@@ -785,6 +1045,10 @@ final class BookingRepository
             return false;
         }
 
+        if ($this->professionalDailyCancelsRemaining($professionalId) <= 0) {
+            return false;
+        }
+
         $status = (string) ($booking['status'] ?? '');
         if (!self::isProfessionalCancellableStatus($status)) {
             return false;
@@ -796,12 +1060,30 @@ final class BookingRepository
             $reason = null;
         }
 
-        if ($this->hasCancelReasonColumn()) {
+        if ($this->hasCancelReasonColumn() && $this->hasCancelledByColumns()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'cancelled', cancel_reason = ?, cancelled_by = 'professional',
+                     cancelled_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('confirmed', 'en_route', 'arrived')"
+            );
+            $stmt->execute([$reason, $bookingId, $professionalId]);
+        } elseif ($this->hasCancelledByColumns()) {
+            $stmt = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'cancelled', cancelled_by = 'professional',
+                     cancelled_at = NOW(), updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?
+                   AND status IN ('confirmed', 'en_route', 'arrived')"
+            );
+            $stmt->execute([$bookingId, $professionalId]);
+        } elseif ($this->hasCancelReasonColumn()) {
             $stmt = $this->db->prepare(
                 "UPDATE service_bookings
                  SET status = 'cancelled', cancel_reason = ?, updated_at = NOW()
                  WHERE id = ? AND professional_id = ?
-                   AND status IN ('confirmed', 'en_route')"
+                   AND status IN ('confirmed', 'en_route', 'arrived')"
             );
             $stmt->execute([$reason, $bookingId, $professionalId]);
         } else {
@@ -809,7 +1091,7 @@ final class BookingRepository
                 "UPDATE service_bookings
                  SET status = 'cancelled', updated_at = NOW()
                  WHERE id = ? AND professional_id = ?
-                   AND status IN ('confirmed', 'en_route')"
+                   AND status IN ('confirmed', 'en_route', 'arrived')"
             );
             $stmt->execute([$bookingId, $professionalId]);
         }
@@ -837,15 +1119,21 @@ final class BookingRepository
         return true;
     }
 
-    /** Whether the pro can still cancel: open offer, or on the way. */
+    /** Whether the pro can still cancel: open offer, or on the way (and under daily limit). */
     public function canProfessionalCancel(array $row): bool
     {
+        $proId = (int) ($row['professional_id'] ?? 0);
+        if ($proId > 0 && $this->professionalDailyCancelsRemaining($proId) <= 0) {
+            return false;
+        }
+
         return self::isProfessionalCancellableStatus((string) ($row['status'] ?? ''));
     }
 
     private static function isProfessionalCancellableStatus(string $status): bool
     {
-        return in_array($status, ['confirmed', 'en_route'], true);
+        // Allowed until work starts (in_progress).
+        return in_array($status, ['confirmed', 'en_route', 'arrived'], true);
     }
 
     /** Late reject (en_route) requires a reason from the professional. */
@@ -1500,6 +1788,9 @@ final class BookingRepository
             'problem' => $row['problem_description'],
             'customer_name' => self::customerDisplayName($row),
             'customer_area_name' => $row['address_text'],
+            // Share service pin so the pro can decide accept/reject before work starts.
+            'customer_lat' => $row['address_lat'] !== null ? (float) $row['address_lat'] : null,
+            'customer_lng' => $row['address_lng'] !== null ? (float) $row['address_lng'] : null,
             'distance_km' => self::distanceKm($row, $proLat, $proLng),
             'visit_fee_paise' => (int) $row['visit_fee_paise'],
             'preferred_time' => IstTime::formatTs($scheduled),
@@ -1507,6 +1798,9 @@ final class BookingRepository
             'expires_at' => IstTime::formatTs($scheduled),
             'created_at' => IstTime::formatTs($created),
             'commission_preview' => $this->commissionPreviewForPro((int) $row['professional_id'], (int) $row['visit_fee_paise']),
+            'cancels_remaining_today' => $this->professionalDailyCancelsRemaining((int) ($row['professional_id'] ?? 0)),
+            'daily_cancel_limit' => self::DAILY_CANCEL_LIMIT,
+            'can_reject' => $this->professionalDailyCancelsRemaining((int) ($row['professional_id'] ?? 0)) > 0,
         ];
     }
 
@@ -1582,6 +1876,8 @@ final class BookingRepository
             'can_cancel' => $this->canProfessionalCancel($row),
             'reject_requires_reason' => self::rejectRequiresReason((string) ($row['status'] ?? '')),
             'reject_penalty_paise' => $this->lateRejectPenaltyPaise($row),
+            'cancels_remaining_today' => $this->professionalDailyCancelsRemaining((int) ($row['professional_id'] ?? 0)),
+            'daily_cancel_limit' => self::DAILY_CANCEL_LIMIT,
         ];
     }
 
@@ -1846,5 +2142,37 @@ final class BookingRepository
         }
 
         return $cached;
+    }
+
+    private function hasProStuckTrackColumns(): bool
+    {
+        if (self::$hasProStuckTrackColumns !== null) {
+            return self::$hasProStuckTrackColumns;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'pro_last_moved_at'");
+            self::$hasProStuckTrackColumns = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasProStuckTrackColumns = false;
+        }
+
+        return self::$hasProStuckTrackColumns;
+    }
+
+    private function hasCancelledByColumns(): bool
+    {
+        if (self::$hasCancelledByColumns !== null) {
+            return self::$hasCancelledByColumns;
+        }
+
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM service_bookings LIKE 'cancelled_by'");
+            self::$hasCancelledByColumns = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            self::$hasCancelledByColumns = false;
+        }
+
+        return self::$hasCancelledByColumns;
     }
 }

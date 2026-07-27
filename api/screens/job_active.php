@@ -195,6 +195,14 @@ final class JobActiveScreen extends ScreenHandler
                 }
 
                 if (!$bookings->cancelByProfessional($bookingId, $proId, $reason !== '' ? $reason : null)) {
+                    if ($bookings->professionalDailyCancelsRemaining($proId) <= 0) {
+                        Response::fail(
+                            $bookings->dailyCancelLimitMessage('professional'),
+                            400,
+                            'daily_cancel_limit',
+                        );
+                        return;
+                    }
                     Response::fail(
                         'You can reject only before you mark arrived at the customer location.',
                         400,
