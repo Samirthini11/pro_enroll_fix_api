@@ -129,9 +129,9 @@ final class JobOfferScreen extends ScreenHandler
                 return;
             }
 
-            $activeRow = $bookings->acceptOffer($bookingId, $proId);
+            $acceptedRow = $bookings->acceptOffer($bookingId, $proId);
 
-            if ($activeRow === null) {
+            if ($acceptedRow === null) {
 
                 Response::fail('Offer not found or already handled', 404);
 
@@ -139,13 +139,17 @@ final class JobOfferScreen extends ScreenHandler
 
             }
 
+            // Keep the current working job as active_job when another was already open.
+            // Accept is allowed; next steps on the new job stay blocked until current closes.
+            $primaryRow = $bookings->findActiveForProfessional($proId) ?? $acceptedRow;
+            $queued = (int) ($primaryRow['id'] ?? 0) !== (int) ($acceptedRow['id'] ?? 0);
 
+            $active = $bookings->activeJobPayload($primaryRow, $proLat, $proLng);
+            if (!$queued) {
+                $active['status'] = 'accepted';
+            }
 
-            $active = $bookings->activeJobPayload($activeRow, $proLat, $proLng);
-
-            $active['status'] = 'accepted';
-
-            BookingPushNotifier::acceptedForCustomer($activeRow, $pro);
+            BookingPushNotifier::acceptedForCustomer($acceptedRow, $pro);
 
             Response::ok([
 
@@ -153,9 +157,11 @@ final class JobOfferScreen extends ScreenHandler
 
                 'accepted' => true,
 
+                'queued' => $queued,
+
                 'active_job' => $active,
 
-                'next_route' => '/job/active',
+                'next_route' => $queued ? null : '/job/active',
 
             ]);
 

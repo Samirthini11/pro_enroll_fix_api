@@ -1189,6 +1189,8 @@ final class BookingRepository
     public function findActiveForProfessional(int $professionalId, ?int $bookingId = null): ?array
     {
         // Include awaiting_payment so pro can confirm cash / offline payment received.
+        // Prefer the job already in progress (not the newest accept) so accepting
+        // another offer cannot steal the active slot from the current job.
         $sql = "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
                 FROM service_bookings b
                 INNER JOIN customers c ON c.id = b.customer_id
@@ -1199,13 +1201,66 @@ final class BookingRepository
             $sql .= ' AND b.id = ?';
             $params[] = $bookingId;
         }
-        $sql .= ' ORDER BY b.updated_at DESC LIMIT 1';
+        $acceptedOrder = $this->hasAcceptedAtColumn()
+            ? 'COALESCE(b.accepted_at, b.updated_at, b.created_at)'
+            : 'COALESCE(b.updated_at, b.created_at)';
+        $sql .= " ORDER BY
+                    CASE b.status
+                        WHEN 'in_progress' THEN 1
+                        WHEN 'arrived' THEN 2
+                        WHEN 'awaiting_payment' THEN 3
+                        WHEN 'en_route' THEN 4
+                        ELSE 5
+                    END ASC,
+                    $acceptedOrder ASC,
+                    b.id ASC
+                  LIMIT 1";
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
         $row = $stmt->fetch();
 
         return $row ?: null;
+    }
+
+    /**
+     * Another live job that must be finished/cancelled before [bookingId] can
+     * advance (on the way / arrived / start work). Accept remains allowed.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function findBlockingJobForAdvance(int $professionalId, int $bookingId): ?array
+    {
+        $primary = $this->findActiveForProfessional($professionalId);
+        if ($primary === null) {
+            return null;
+        }
+        // This booking is the current job — allow next steps.
+        if ((int) ($primary['id'] ?? 0) === $bookingId) {
+            return null;
+        }
+
+        // A different job is still open — block advancing this queued accept.
+        return $primary;
+    }
+
+    /** True when the pro already has a live job other than [excludeBookingId]. */
+    public function hasOtherActiveJob(int $professionalId, ?int $excludeBookingId = null): bool
+    {
+        $sql = "SELECT 1
+                FROM service_bookings
+                WHERE professional_id = ?
+                  AND status IN ('en_route', 'arrived', 'in_progress', 'awaiting_payment')";
+        $params = [$professionalId];
+        if ($excludeBookingId !== null) {
+            $sql .= ' AND id <> ?';
+            $params[] = $excludeBookingId;
+        }
+        $sql .= ' LIMIT 1';
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+
+        return (bool) $stmt->fetchColumn();
     }
 
     /**
@@ -1274,6 +1329,11 @@ final class BookingRepository
         }
         if ((string) $current['status'] === $dbStatus) {
             return true;
+        }
+
+        // Accept while busy is allowed; advancing a queued job is not.
+        if ($this->findBlockingJobForAdvance($professionalId, $bookingId) !== null) {
+            return false;
         }
 
         $stmt = $this->db->prepare(

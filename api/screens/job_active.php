@@ -135,6 +135,16 @@ final class JobActiveScreen extends ScreenHandler
 
             $statusUpdated = false;
             if ($status !== null && $status !== '') {
+                // Strict: cannot advance a queued accept while another job is still open.
+                if ($bookings->findBlockingJobForAdvance($proId, $bookingId) !== null) {
+                    Response::fail(
+                        'Finish or close your current job before starting the next one.',
+                        409,
+                        'job_in_progress',
+                    );
+                    return;
+                }
+
                 $statusUpdated = $bookings->updateActiveJobStatus(
                     $bookingId,
                     $proId,
