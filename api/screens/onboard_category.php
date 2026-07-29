@@ -7,6 +7,7 @@ namespace ProEnroll\Api\Endpoints\Screens;
 use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
+use ProEnroll\Api\IstTime;
 use ProEnroll\Api\ReferenceData;
 use ProEnroll\Api\Services\CategoryRepository;
 
@@ -23,6 +24,7 @@ final class OnboardCategoryScreen extends ScreenHandler
             Response::ok([
                 'screen' => 'onboard_category',
                 'categories' => ReferenceData::categories(),
+                'current_year' => IstTime::currentYear(),
             ]);
             return;
         }
@@ -49,7 +51,11 @@ final class OnboardCategoryScreen extends ScreenHandler
             return;
         }
 
+        $startByCategory = $request->input('experience_start_year_by_category', []);
         $yearsByCategory = $request->input('experience_by_category', []);
+        if (!is_array($startByCategory)) {
+            $startByCategory = [];
+        }
         if (!is_array($yearsByCategory)) {
             $yearsByCategory = [];
         }
@@ -58,15 +64,18 @@ final class OnboardCategoryScreen extends ScreenHandler
         $skills = [];
         foreach ($codes as $i => $code) {
             $code = (string) $code;
-            $years = 0;
-            if (isset($yearsByCategory[$code])) {
-                $years = (int) $yearsByCategory[$code];
-            }
-            $skills[] = [
+            $skill = [
                 'category_code' => $code,
-                'experience_years' => max(0, min(50, $years)),
                 'is_primary' => $i === 0,
             ];
+            if (isset($startByCategory[$code])) {
+                $skill['experience_start_year'] = IstTime::clampStartYear((int) $startByCategory[$code]);
+            } elseif (isset($yearsByCategory[$code])) {
+                $skill['experience_years'] = max(0, min(50, (int) $yearsByCategory[$code]));
+            } else {
+                $skill['experience_start_year'] = IstTime::currentYear();
+            }
+            $skills[] = $skill;
         }
         $this->pros->replaceSkills($this->uid($request), $skills);
 
@@ -74,6 +83,8 @@ final class OnboardCategoryScreen extends ScreenHandler
             'screen' => 'onboard_category',
             'saved' => true,
             'category_codes' => $codes,
+            'current_year' => IstTime::currentYear(),
+            'profile' => $this->pros->profilePayload($this->uid($request)),
         ]);
     }
 }

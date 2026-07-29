@@ -17,12 +17,12 @@ final class ReferenceData
     public static function staticCategories(): array
     {
         return [
-            ['code' => 'ac', 'name_en' => 'AC Mechanic', 'name_ta' => 'AC மெக்கானிக்', 'icon_key' => 'ac_unit', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 1],
+            ['code' => 'ac', 'name_en' => 'AC Mechanic', 'name_ta' => 'ஏசி மெக்கானிக்', 'icon_key' => 'ac_unit', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 1],
             ['code' => 'plumber', 'name_en' => 'Plumber', 'name_ta' => 'பிளம்பர்', 'icon_key' => 'plumbing', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 2],
             ['code' => 'electrician', 'name_en' => 'Electrician', 'name_ta' => 'மின்சார வேலை', 'icon_key' => 'electrical_services', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 3],
-            ['code' => 'ro', 'name_en' => 'RO Water Service', 'name_ta' => 'RO வாட்டர் சர்வீஸ்', 'icon_key' => 'water_drop', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 4],
-            ['code' => 'fridge', 'name_en' => 'Fridge Repair', 'name_ta' => 'குளிர்சாதனம் ரிப்பேர்', 'icon_key' => 'kitchen', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 5],
-            ['code' => 'wash', 'name_en' => 'Washing Machine', 'name_ta' => 'வாஷிங் மெஷின்', 'icon_key' => 'local_laundry_service', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 6],
+            ['code' => 'ro', 'name_en' => 'RO Water Service', 'name_ta' => 'RO குடிநீர் சேவை', 'icon_key' => 'water_drop', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 4],
+            ['code' => 'fridge', 'name_en' => 'Fridge Repair', 'name_ta' => 'குளிர்சாதனப் பழுதுபார்ப்பு', 'icon_key' => 'kitchen', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 5],
+            ['code' => 'wash', 'name_en' => 'Washing Machine', 'name_ta' => 'சலவை இயந்திரம்', 'icon_key' => 'local_laundry_service', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 6],
             ['code' => 'car', 'name_en' => 'Car Mechanic', 'name_ta' => 'கார் மெக்கானிக்', 'icon_key' => 'directions_car', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 7],
             ['code' => 'bike', 'name_en' => 'Bike Mechanic', 'name_ta' => 'பைக் மெக்கானிக்', 'icon_key' => 'two_wheeler', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 8],
         ];

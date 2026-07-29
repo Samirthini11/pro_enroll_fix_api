@@ -61,6 +61,40 @@ final class IstTime
             ->format('Y-m-d\TH:i:sP');
     }
 
+    /** Current calendar year in IST. */
+    public static function currentYear(): int
+    {
+        return (int) (new \DateTimeImmutable('now', new \DateTimeZone(self::ZONE)))->format('Y');
+    }
+
+    /**
+     * Experience years from service start year (IST).
+     * Clamps to 0…50.
+     */
+    public static function experienceYearsFromStart(int $startYear): int
+    {
+        $current = self::currentYear();
+        $start = self::clampStartYear($startYear);
+
+        return max(0, min(50, $current - $start));
+    }
+
+    /** Allowed start years: 1970 … current IST year. */
+    public static function clampStartYear(int $startYear): int
+    {
+        $current = self::currentYear();
+
+        return max(1970, min($current, $startYear));
+    }
+
+    /** Convert legacy "N years" into a start year. */
+    public static function startYearFromExperienceYears(int $years): int
+    {
+        $years = max(0, min(50, $years));
+
+        return self::clampStartYear(self::currentYear() - $years);
+    }
+
     /** Current IST as MySQL DATETIME. */
     public static function nowMysql(): string
     {

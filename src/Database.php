@@ -48,6 +48,8 @@ final class Database
             ]);
             // Store / read DATETIME in India Standard Time.
             self::$pdo->exec("SET time_zone = '+05:30'");
+            // Keep Tamil / Unicode category names intact.
+            self::$pdo->exec('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
         } catch (PDOException $e) {
             throw new \RuntimeException('Database connection failed: ' . $e->getMessage(), 0, $e);
         }

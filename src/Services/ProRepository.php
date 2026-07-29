@@ -201,7 +201,15 @@ final class ProRepository
         return $stmt->rowCount();
     }
 
-    /** @param list<array{category_code: string, experience_years: int, is_primary: bool}> $skills */
+    /**
+     * @param list<array{
+     *   category_code: string,
+     *   experience_years?: int,
+     *   experience_start_year?: int,
+     *   is_primary: bool,
+     *   visit_fee_paise?: int
+     * }> $skills
+     */
     public function replaceSkills(string $uid, array $skills): void
     {
         $pro = $this->findByFirebaseUid($uid);
@@ -209,29 +217,287 @@ final class ProRepository
             return;
         }
         $proId = (int) $pro['id'];
-        $this->db->prepare('DELETE FROM professional_skills WHERE professional_id = ?')->execute([$proId]);
-        $stmt = $this->db->prepare(
-            'INSERT INTO professional_skills (professional_id, category_code, experience_years, is_primary)
-             VALUES (?, ?, ?, ?)'
-        );
-        foreach ($skills as $s) {
-            $stmt->execute([
-                $proId,
-                $s['category_code'],
-                $s['experience_years'],
-                $s['is_primary'] ? 1 : 0,
-            ]);
+        $settings = new PlatformSettingsRepository();
+        $fallbackFee = $settings->clampVisitFeePaise((int) ($pro['visit_fee_paise'] ?? 15000));
+
+        $existingFees = [];
+        $existingStarts = [];
+        foreach ($this->getSkills($proId) as $row) {
+            $code = (string) ($row['category_code'] ?? '');
+            if ($code === '') {
+                continue;
+            }
+            if ($this->hasSkillVisitFeeColumn()) {
+                $existingFees[$code] = (int) ($row['visit_fee_paise'] ?? $fallbackFee);
+            }
+            $existingStarts[$code] = (int) ($row['experience_start_year']
+                ?? \ProEnroll\Api\IstTime::startYearFromExperienceYears((int) ($row['experience_years'] ?? 0)));
         }
+
+        $this->db->prepare('DELETE FROM professional_skills WHERE professional_id = ?')->execute([$proId]);
+
+        $hasStart = $this->hasExperienceStartYearColumn();
+        $hasFee = $this->hasSkillVisitFeeColumn();
+
+        if ($hasStart && $hasFee) {
+            $stmt = $this->db->prepare(
+                'INSERT INTO professional_skills
+                 (professional_id, category_code, experience_years, experience_start_year, is_primary, visit_fee_paise)
+                 VALUES (?, ?, ?, ?, ?, ?)'
+            );
+        } elseif ($hasStart) {
+            $stmt = $this->db->prepare(
+                'INSERT INTO professional_skills
+                 (professional_id, category_code, experience_years, experience_start_year, is_primary)
+                 VALUES (?, ?, ?, ?, ?)'
+            );
+        } elseif ($hasFee) {
+            $stmt = $this->db->prepare(
+                'INSERT INTO professional_skills
+                 (professional_id, category_code, experience_years, is_primary, visit_fee_paise)
+                 VALUES (?, ?, ?, ?, ?)'
+            );
+        } else {
+            $stmt = $this->db->prepare(
+                'INSERT INTO professional_skills (professional_id, category_code, experience_years, is_primary)
+                 VALUES (?, ?, ?, ?)'
+            );
+        }
+
+        foreach ($skills as $s) {
+            $code = (string) $s['category_code'];
+            $startYear = $this->resolveStartYearFromSkillInput($s, $existingStarts[$code] ?? null);
+            $years = \ProEnroll\Api\IstTime::experienceYearsFromStart($startYear);
+            $fee = isset($s['visit_fee_paise'])
+                ? (int) $s['visit_fee_paise']
+                : ($existingFees[$code] ?? $this->categoryDefaultFeePaise($code) ?? $fallbackFee);
+            $fee = $settings->clampVisitFeePaise($fee);
+            $primary = !empty($s['is_primary']) ? 1 : 0;
+
+            if ($hasStart && $hasFee) {
+                $stmt->execute([$proId, $code, $years, $startYear, $primary, $fee]);
+            } elseif ($hasStart) {
+                $stmt->execute([$proId, $code, $years, $startYear, $primary]);
+            } elseif ($hasFee) {
+                $stmt->execute([$proId, $code, $years, $primary, $fee]);
+            } else {
+                $stmt->execute([$proId, $code, $years, $primary]);
+            }
+        }
+
+        $this->syncLegacyVisitFeeFromSkills($proId);
+    }
+
+    /**
+     * @param array<string, mixed> $skill
+     */
+    private function resolveStartYearFromSkillInput(array $skill, ?int $existingStart): int
+    {
+        if (isset($skill['experience_start_year']) && (int) $skill['experience_start_year'] > 0) {
+            return \ProEnroll\Api\IstTime::clampStartYear((int) $skill['experience_start_year']);
+        }
+        if (isset($skill['experience_years'])) {
+            return \ProEnroll\Api\IstTime::startYearFromExperienceYears((int) $skill['experience_years']);
+        }
+        if ($existingStart !== null && $existingStart > 0) {
+            return \ProEnroll\Api\IstTime::clampStartYear($existingStart);
+        }
+
+        return \ProEnroll\Api\IstTime::currentYear();
+    }
+
+    /**
+     * Save per-service visiting charges. Also syncs professionals.visit_fee_paise.
+     *
+     * @param list<array{category_code: string, visit_fee_paise: int}> $fees
+     */
+    public function updateSkillVisitFees(string $uid, array $fees): void
+    {
+        $pro = $this->findByFirebaseUid($uid);
+        if ($pro === null || $fees === []) {
+            return;
+        }
+        $proId = (int) $pro['id'];
+        $settings = new PlatformSettingsRepository();
+
+        if ($this->hasSkillVisitFeeColumn()) {
+            $stmt = $this->db->prepare(
+                'UPDATE professional_skills
+                 SET visit_fee_paise = ?
+                 WHERE professional_id = ? AND category_code = ?'
+            );
+            foreach ($fees as $row) {
+                $code = trim((string) ($row['category_code'] ?? ''));
+                if ($code === '') {
+                    continue;
+                }
+                $fee = $settings->clampVisitFeePaise((int) ($row['visit_fee_paise'] ?? 0));
+                $stmt->execute([$fee, $proId, $code]);
+            }
+        }
+
+        // Always keep legacy column in sync (primary skill fee, else first fee).
+        $legacy = null;
+        foreach ($fees as $row) {
+            $fee = $settings->clampVisitFeePaise((int) ($row['visit_fee_paise'] ?? 0));
+            if ($legacy === null) {
+                $legacy = $fee;
+            }
+        }
+        $skills = $this->getSkills($proId);
+        foreach ($skills as $s) {
+            if (!empty($s['is_primary'])) {
+                $legacy = $settings->clampVisitFeePaise((int) ($s['visit_fee_paise'] ?? $legacy ?? 15000));
+                break;
+            }
+        }
+        if ($legacy !== null) {
+            $this->updateProfile($uid, ['visit_fee_paise' => $legacy]);
+        } else {
+            $this->syncLegacyVisitFeeFromSkills($proId);
+        }
+    }
+
+    /** Resolve visit fee for a category (skill fee → profile fee → category default). */
+    public function resolveVisitFeePaise(int $professionalId, ?string $categoryCode = null): int
+    {
+        $settings = new PlatformSettingsRepository();
+        $pro = $this->findById($professionalId);
+        $fallback = $settings->clampVisitFeePaise((int) ($pro['visit_fee_paise'] ?? 15000));
+
+        if ($categoryCode === null || $categoryCode === '') {
+            return $fallback;
+        }
+
+        foreach ($this->getSkills($professionalId) as $s) {
+            if ((string) ($s['category_code'] ?? '') !== $categoryCode) {
+                continue;
+            }
+            if (isset($s['visit_fee_paise']) && (int) $s['visit_fee_paise'] > 0) {
+                return $settings->clampVisitFeePaise((int) $s['visit_fee_paise']);
+            }
+            break;
+        }
+
+        return $settings->clampVisitFeePaise(
+            $this->categoryDefaultFeePaise($categoryCode) ?? $fallback,
+        );
     }
 
     /** @return list<array<string, mixed>> */
     public function getSkills(int $professionalId): array
     {
-        $stmt = $this->db->prepare(
-            'SELECT category_code, experience_years, is_primary FROM professional_skills WHERE professional_id = ?'
-        );
+        $cols = ['category_code', 'experience_years', 'is_primary'];
+        if ($this->hasExperienceStartYearColumn()) {
+            $cols[] = 'experience_start_year';
+        }
+        if ($this->hasSkillVisitFeeColumn()) {
+            $cols[] = 'visit_fee_paise';
+        }
+        $sql = 'SELECT ' . implode(', ', $cols)
+            . ' FROM professional_skills WHERE professional_id = ?';
+        $stmt = $this->db->prepare($sql);
         $stmt->execute([$professionalId]);
-        return $stmt->fetchAll();
+        $rows = $stmt->fetchAll();
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $settings = new PlatformSettingsRepository();
+        $out = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $code = (string) ($row['category_code'] ?? '');
+            $fee = isset($row['visit_fee_paise'])
+                ? (int) $row['visit_fee_paise']
+                : ($this->categoryDefaultFeePaise($code) ?? 15000);
+
+            if (isset($row['experience_start_year']) && (int) $row['experience_start_year'] > 0) {
+                $startYear = \ProEnroll\Api\IstTime::clampStartYear((int) $row['experience_start_year']);
+            } else {
+                $startYear = \ProEnroll\Api\IstTime::startYearFromExperienceYears(
+                    (int) ($row['experience_years'] ?? 0),
+                );
+            }
+            $years = \ProEnroll\Api\IstTime::experienceYearsFromStart($startYear);
+
+            $out[] = [
+                'category_code' => $code,
+                'experience_start_year' => $startYear,
+                'experience_years' => $years,
+                'is_primary' => (bool) ($row['is_primary'] ?? false),
+                'visit_fee_paise' => $settings->clampVisitFeePaise($fee > 0 ? $fee : 15000),
+            ];
+        }
+
+        return $out;
+    }
+
+    private function hasExperienceStartYearColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professional_skills LIKE 'experience_start_year'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
+    }
+
+    private function syncLegacyVisitFeeFromSkills(int $professionalId): void
+    {
+        $skills = $this->getSkills($professionalId);
+        if ($skills === []) {
+            return;
+        }
+        $settings = new PlatformSettingsRepository();
+        $fee = null;
+        foreach ($skills as $s) {
+            if (!empty($s['is_primary'])) {
+                $fee = (int) $s['visit_fee_paise'];
+                break;
+            }
+        }
+        $fee ??= (int) $skills[0]['visit_fee_paise'];
+        $fee = $settings->clampVisitFeePaise($fee);
+        $stmt = $this->db->prepare(
+            'UPDATE professionals SET visit_fee_paise = ?, updated_at = NOW() WHERE id = ?'
+        );
+        $stmt->execute([$fee, $professionalId]);
+    }
+
+    private function categoryDefaultFeePaise(string $code): ?int
+    {
+        foreach (\ProEnroll\Api\ReferenceData::staticCategories() as $c) {
+            if (($c['code'] ?? '') === $code) {
+                return (int) ($c['default_visit_fee_paise'] ?? 15000);
+            }
+        }
+
+        return null;
+    }
+
+    private function hasSkillVisitFeeColumn(): bool
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professional_skills LIKE 'visit_fee_paise'");
+            $cached = $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            $cached = false;
+        }
+
+        return $cached;
     }
 
     /**
@@ -466,8 +732,10 @@ final class ProRepository
             'phone_masked' => self::maskPhone($pro['phone_e164'] ?? ''),
             'city_id' => $cityId,
             'work_radius_km' => (int) $pro['work_radius_km'],
-            'visit_fee_paise' => (new PlatformSettingsRepository())
-                ->clampVisitFeePaise((int) $pro['visit_fee_paise']),
+            'visit_fee_paise' => $this->resolveVisitFeePaise(
+                (int) $pro['id'],
+                is_string($categoryCode) && $categoryCode !== '' ? $categoryCode : (string) $primary,
+            ),
             'is_available' => (bool) $pro['is_available'],
             'kyc_verified' => $pro['kyc_status'] === 'verified',
             'kyc_status' => $pro['kyc_status'],
@@ -482,7 +750,9 @@ final class ProRepository
             'skills' => array_map(static fn ($s) => [
                 'category_code' => $s['category_code'],
                 'experience_years' => (int) $s['experience_years'],
+                'experience_start_year' => (int) ($s['experience_start_year'] ?? \ProEnroll\Api\IstTime::currentYear()),
                 'is_primary' => (bool) $s['is_primary'],
+                'visit_fee_paise' => (int) ($s['visit_fee_paise'] ?? 15000),
             ], $skills),
         ];
     }
@@ -565,7 +835,9 @@ final class ProRepository
             'skills' => array_map(static fn ($s) => [
                 'category_code' => $s['category_code'],
                 'experience_years' => (int) $s['experience_years'],
+                'experience_start_year' => (int) ($s['experience_start_year'] ?? \ProEnroll\Api\IstTime::currentYear()),
                 'is_primary' => (bool) $s['is_primary'],
+                'visit_fee_paise' => (int) ($s['visit_fee_paise'] ?? 15000),
             ], $skills),
         ];
     }

@@ -40,10 +40,15 @@ final class CategoryRepository
                 if (!is_array($row)) {
                     continue;
                 }
+                $code = (string) $row['code'];
+                $nameTa = (string) ($row['name_ta'] ?? '');
+                if (self::isBrokenTamil($nameTa)) {
+                    $nameTa = self::staticTamilName($code) ?? $nameTa;
+                }
                 $out[] = [
-                    'code' => (string) $row['code'],
+                    'code' => $code,
                     'name_en' => (string) $row['name_en'],
-                    'name_ta' => (string) $row['name_ta'],
+                    'name_ta' => $nameTa,
                     'icon_key' => (string) ($row['icon_key'] ?? 'build'),
                     'default_visit_fee_paise' => (int) $row['default_visit_fee_paise'],
                     'base_price_paise' => (int) ($row['base_price_paise'] ?? $row['default_visit_fee_paise']),
@@ -55,6 +60,29 @@ final class CategoryRepository
         } catch (\Throwable) {
             return ReferenceData::staticCategories();
         }
+    }
+
+    /** Corrupted charset often becomes literal "?" or loses Tamil script. */
+    private static function isBrokenTamil(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '' || str_contains($value, '?')) {
+            return true;
+        }
+
+        return !preg_match('/[\x{0B80}-\x{0BFF}]/u', $value);
+    }
+
+    private static function staticTamilName(string $code): ?string
+    {
+        foreach (ReferenceData::staticCategories() as $c) {
+            if (($c['code'] ?? '') === $code) {
+                $ta = (string) ($c['name_ta'] ?? '');
+                return $ta !== '' ? $ta : null;
+            }
+        }
+
+        return null;
     }
 
     public function isValidCode(string $code): bool

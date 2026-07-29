@@ -121,6 +121,17 @@ final class JobOfferScreen extends ScreenHandler
 
         if ($request->method === 'POST' && str_ends_with($request->path, '/accept')) {
 
+            // Block accept until the current job is completed / cancelled.
+            $current = $bookings->findActiveForProfessional($proId);
+            if ($current !== null) {
+                Response::fail(
+                    'Finish your current job before accepting a new one.',
+                    409,
+                    'job_in_progress',
+                );
+                return;
+            }
+
             $offer = $bookings->findOfferForProfessional($bookingId, $proId);
             $visitFee = $offer !== null ? (int) ($offer['visit_fee_paise'] ?? 0) : null;
             $gate = $bookings->acceptWalletGate($proId, $visitFee);
@@ -139,15 +150,8 @@ final class JobOfferScreen extends ScreenHandler
 
             }
 
-            // Keep the current working job as active_job when another was already open.
-            // Accept is allowed; next steps on the new job stay blocked until current closes.
-            $primaryRow = $bookings->findActiveForProfessional($proId) ?? $acceptedRow;
-            $queued = (int) ($primaryRow['id'] ?? 0) !== (int) ($acceptedRow['id'] ?? 0);
-
-            $active = $bookings->activeJobPayload($primaryRow, $proLat, $proLng);
-            if (!$queued) {
-                $active['status'] = 'accepted';
-            }
+            $active = $bookings->activeJobPayload($acceptedRow, $proLat, $proLng);
+            $active['status'] = 'accepted';
 
             BookingPushNotifier::acceptedForCustomer($acceptedRow, $pro);
 
@@ -157,11 +161,9 @@ final class JobOfferScreen extends ScreenHandler
 
                 'accepted' => true,
 
-                'queued' => $queued,
-
                 'active_job' => $active,
 
-                'next_route' => $queued ? null : '/job/active',
+                'next_route' => '/job/active',
 
             ]);
 
