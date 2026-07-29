@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ProEnroll\Api;
 
+use ProEnroll\Api\Endpoints\Admin\AdminBookingsEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminCategoriesEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminCustomersEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDashboardEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDocumentsEndpoint;
@@ -111,6 +113,10 @@ final class Router
         'GET /v1/admin/professionals' => AdminProfessionalsEndpoint::class,
         'GET /v1/admin/customers' => AdminCustomersEndpoint::class,
         'GET /v1/admin/wallet-recharges' => AdminWalletRechargesEndpoint::class,
+        'GET /v1/admin/categories' => AdminCategoriesEndpoint::class,
+        'POST /v1/admin/categories' => AdminCategoriesEndpoint::class,
+        'GET /v1/admin/bookings/stats' => AdminBookingsEndpoint::class,
+        'GET /v1/admin/bookings' => AdminBookingsEndpoint::class,
     ];
 
     public static function dispatch(Request $request): void
@@ -210,6 +216,16 @@ final class Router
 
         if (preg_match('#^POST /v1/admin/wallet-recharges/(\d+)/(approve|reject)$#', $key, $m)) {
             (new AdminWalletRechargesEndpoint())->handle($request, (int) $m[1], $m[2]);
+            return;
+        }
+
+        if (preg_match('#^GET /v1/admin/categories/([a-z0-9_]+)$#', $key, $m)) {
+            (new AdminCategoriesEndpoint())->handle($request, $m[1]);
+            return;
+        }
+
+        if ($request->path === '/v1/admin/bookings/stats' && $request->method === 'GET') {
+            (new AdminBookingsEndpoint())->handle($request, 'stats');
             return;
         }
 

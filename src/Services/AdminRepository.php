@@ -864,6 +864,252 @@ final class AdminRepository
         return 'p.full_name AS counterparty_name';
     }
 
+    /**
+     * Platform-wide booking analytics with optional date/month filter.
+     *
+     * @return array<string, mixed>
+     */
+    public function bookingAnalytics(string $from = '', string $to = '', string $month = ''): array
+    {
+        if (!$this->hasBookingsTable()) {
+            return [
+                'filter' => ['from' => $from, 'to' => $to, 'month' => $month],
+                'total' => 0,
+                'completed' => 0,
+                'cancelled' => 0,
+                'active' => 0,
+                'total_visit_fee_paise' => 0,
+                'completed_visit_fee_paise' => 0,
+                'by_category' => [],
+                'by_month' => [],
+                'by_day' => [],
+            ];
+        }
+
+        [$dateSql, $dateParams] = $this->bookingDateFilterSql($from, $to, $month);
+
+        $statsSql = "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+                SUM(CASE WHEN status IN ('pending','confirmed','en_route','arrived','in_progress','awaiting_payment') THEN 1 ELSE 0 END) AS active,
+                SUM(visit_fee_paise) AS total_visit_fee_paise,
+                SUM(CASE WHEN status = 'completed' THEN visit_fee_paise ELSE 0 END) AS completed_visit_fee_paise
+             FROM service_bookings b
+             WHERE 1=1 $dateSql";
+        $stmt = $this->db->prepare($statsSql);
+        $stmt->execute($dateParams);
+        $stats = $stmt->fetch() ?: [];
+
+        $byCategory = [];
+        $catSql = "SELECT b.category_code, COUNT(*) AS cnt
+                   FROM service_bookings b
+                   WHERE 1=1 $dateSql
+                   GROUP BY b.category_code
+                   ORDER BY cnt DESC";
+        $catStmt = $this->db->prepare($catSql);
+        $catStmt->execute($dateParams);
+        foreach ($catStmt->fetchAll() as $row) {
+            $code = (string) ($row['category_code'] ?? '');
+            $byCategory[] = [
+                'code' => $code,
+                'name_en' => $this->categoryNameForCode($code),
+                'count' => (int) ($row['cnt'] ?? 0),
+            ];
+        }
+
+        $byMonth = [];
+        if ($month === '' && $from === '' && $to === '') {
+            $monthStmt = $this->db->query(
+                "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month_key, COUNT(*) AS cnt
+                 FROM service_bookings
+                 WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                 GROUP BY month_key
+                 ORDER BY month_key ASC"
+            );
+            foreach ($monthStmt->fetchAll() as $row) {
+                $byMonth[] = [
+                    'month' => (string) ($row['month_key'] ?? ''),
+                    'count' => (int) ($row['cnt'] ?? 0),
+                ];
+            }
+        }
+
+        $byDay = [];
+        if ($month !== '' && preg_match('/^\d{4}-\d{2}$/', $month)) {
+            $dayStmt = $this->db->prepare(
+                "SELECT DATE(created_at) AS day_key, COUNT(*) AS cnt
+                 FROM service_bookings
+                 WHERE created_at >= ? AND created_at < ?
+                 GROUP BY day_key
+                 ORDER BY day_key ASC"
+            );
+            $start = $month . '-01';
+            $end = date('Y-m-d', strtotime($start . ' +1 month'));
+            $dayStmt->execute([$start, $end]);
+            foreach ($dayStmt->fetchAll() as $row) {
+                $byDay[] = [
+                    'date' => (string) ($row['day_key'] ?? ''),
+                    'count' => (int) ($row['cnt'] ?? 0),
+                ];
+            }
+        }
+
+        return [
+            'filter' => ['from' => $from, 'to' => $to, 'month' => $month],
+            'total' => (int) ($stats['total'] ?? 0),
+            'completed' => (int) ($stats['completed'] ?? 0),
+            'cancelled' => (int) ($stats['cancelled'] ?? 0),
+            'active' => (int) ($stats['active'] ?? 0),
+            'total_visit_fee_paise' => (int) ($stats['total_visit_fee_paise'] ?? 0),
+            'completed_visit_fee_paise' => (int) ($stats['completed_visit_fee_paise'] ?? 0),
+            'by_category' => $byCategory,
+            'by_month' => $byMonth,
+            'by_day' => $byDay,
+        ];
+    }
+
+    /**
+     * @return array{items: list<array<string, mixed>>, page: int, limit: int, total: int, total_pages: int, has_more: bool}
+     */
+    public function listAllBookings(
+        int $page = 1,
+        int $limit = 20,
+        ?string $statusFilter = 'all',
+        string $from = '',
+        string $to = '',
+        string $month = '',
+    ): array {
+        $page = max(1, $page);
+        $limit = max(1, min(50, $limit));
+
+        if (!$this->hasBookingsTable()) {
+            return $this->paginatedResponse([], 0, $page, $limit);
+        }
+
+        [$statusSql, $statusParams] = $this->bookingStatusFilterSql($statusFilter);
+        [$dateSql, $dateParams] = $this->bookingDateFilterSql($from, $to, $month);
+        $offset = ($page - 1) * $limit;
+        $allParams = array_merge($dateParams, $statusParams);
+
+        $countSql = "SELECT COUNT(*) FROM service_bookings b WHERE 1=1 $dateSql $statusSql";
+        $countStmt = $this->db->prepare($countSql);
+        $countStmt->execute($allParams);
+        $total = (int) $countStmt->fetchColumn();
+
+        $sql = "SELECT b.*,
+                    c.full_name AS customer_name,
+                    {$this->proProfessionalNameSql()}
+                FROM service_bookings b
+                INNER JOIN customers c ON c.id = b.customer_id
+                INNER JOIN professionals p ON p.id = b.professional_id
+                WHERE 1=1 $dateSql $statusSql
+                ORDER BY b.created_at DESC
+                LIMIT ? OFFSET ?";
+
+        $stmt = $this->db->prepare($sql);
+        $idx = 1;
+        foreach ($allParams as $param) {
+            $stmt->bindValue($idx++, $param);
+        }
+        $stmt->bindValue($idx++, $limit, PDO::PARAM_INT);
+        $stmt->bindValue($idx++, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $items = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = $this->buildGlobalAdminBookingItem($row);
+        }
+
+        return $this->paginatedResponse($items, $total, $page, $limit);
+    }
+
+    /**
+     * Booking counts per category, optionally filtered by date.
+     *
+     * @return array<string, int>
+     */
+    public function categoryBookingCounts(string $from = '', string $to = '', string $month = ''): array
+    {
+        if (!$this->hasBookingsTable()) {
+            return [];
+        }
+
+        [$dateSql, $dateParams] = $this->bookingDateFilterSql($from, $to, $month);
+        $sql = "SELECT category_code, COUNT(*) AS cnt
+                FROM service_bookings b
+                WHERE 1=1 $dateSql
+                GROUP BY category_code";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($dateParams);
+
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(string) $row['category_code']] = (int) ($row['cnt'] ?? 0);
+        }
+
+        return $out;
+    }
+
+    /** @return array{0: string, 1: list<string>} */
+    private function bookingDateFilterSql(string $from, string $to, string $month): array
+    {
+        if ($month !== '' && preg_match('/^\d{4}-\d{2}$/', $month)) {
+            $start = $month . '-01';
+            $end = date('Y-m-d', strtotime($start . ' +1 month'));
+
+            return [' AND b.created_at >= ? AND b.created_at < ?', [$start, $end]];
+        }
+
+        if ($from !== '' && $to !== '') {
+            $endExclusive = date('Y-m-d', strtotime($to . ' +1 day'));
+
+            return [' AND b.created_at >= ? AND b.created_at < ?', [$from, $endExclusive]];
+        }
+
+        if ($from !== '') {
+            return [' AND b.created_at >= ?', [$from]];
+        }
+
+        if ($to !== '') {
+            $endExclusive = date('Y-m-d', strtotime($to . ' +1 day'));
+
+            return [' AND b.created_at < ?', [$endExclusive]];
+        }
+
+        return ['', []];
+    }
+
+    /** @param array<string, mixed> $row */
+    private function buildGlobalAdminBookingItem(array $row): array
+    {
+        $catCode = (string) ($row['category_code'] ?? '');
+
+        return [
+            'id' => (int) $row['id'],
+            'booking_code' => (string) ($row['booking_code'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+            'status_label' => BookingRepository::statusLabel((string) ($row['status'] ?? '')),
+            'category_code' => $catCode,
+            'category_name' => $this->categoryNameForCode($catCode),
+            'customer_name' => (string) ($row['customer_name'] ?? ''),
+            'professional_name' => (string) ($row['professional_name'] ?? ''),
+            'scheduled_at' => (string) ($row['scheduled_at'] ?? ''),
+            'completed_at' => $row['completed_at'] ? (string) $row['completed_at'] : null,
+            'created_at' => (string) ($row['created_at'] ?? ''),
+            'visit_fee_paise' => (int) ($row['visit_fee_paise'] ?? 0),
+        ];
+    }
+
+    private function proProfessionalNameSql(): string
+    {
+        if ($this->hasColumn('professionals', 'display_name')) {
+            return "COALESCE(NULLIF(p.display_name, ''), p.full_name) AS professional_name";
+        }
+
+        return 'p.full_name AS professional_name';
+    }
+
     private function hasColumn(string $table, string $column): bool
     {
         $key = $table . '.' . $column;
