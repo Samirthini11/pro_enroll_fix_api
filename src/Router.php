@@ -9,6 +9,7 @@ use ProEnroll\Api\Endpoints\Admin\AdminCategoriesEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminCustomersEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDashboardEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminDocumentsEndpoint;
+use ProEnroll\Api\Endpoints\Admin\AdminExperienceEditRequestsEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminKycEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminProfessionalsEndpoint;
 use ProEnroll\Api\Endpoints\Admin\AdminWalletRechargesEndpoint;
@@ -96,6 +97,7 @@ final class Router
         'GET /v1/screens/home-profile' => HomeProfileScreen::class,
         'PUT /v1/screens/home-profile' => HomeProfileScreen::class,
         'GET /v1/screens/home-help' => HomeHelpScreen::class,
+        'POST /v1/screens/home-help/experience-edit-request' => HomeHelpScreen::class,
         'GET /v1/screens/job-active' => JobActiveScreen::class,
         'PUT /v1/screens/job-active' => JobActiveScreen::class,
         'POST /v1/screens/job-active' => JobActiveScreen::class,
@@ -113,6 +115,7 @@ final class Router
         'GET /v1/admin/professionals' => AdminProfessionalsEndpoint::class,
         'GET /v1/admin/customers' => AdminCustomersEndpoint::class,
         'GET /v1/admin/wallet-recharges' => AdminWalletRechargesEndpoint::class,
+        'GET /v1/admin/experience-edit-requests' => AdminExperienceEditRequestsEndpoint::class,
         'GET /v1/admin/categories' => AdminCategoriesEndpoint::class,
         'POST /v1/admin/categories' => AdminCategoriesEndpoint::class,
         'GET /v1/admin/bookings/stats' => AdminBookingsEndpoint::class,
@@ -216,6 +219,11 @@ final class Router
 
         if (preg_match('#^POST /v1/admin/wallet-recharges/(\d+)/(approve|reject)$#', $key, $m)) {
             (new AdminWalletRechargesEndpoint())->handle($request, (int) $m[1], $m[2]);
+            return;
+        }
+
+        if (preg_match('#^POST /v1/admin/experience-edit-requests/(\d+)/(approve|reject)$#', $key, $m)) {
+            (new AdminExperienceEditRequestsEndpoint())->handle($request, (int) $m[1], $m[2]);
             return;
         }
 

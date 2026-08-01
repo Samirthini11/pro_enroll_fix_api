@@ -77,7 +77,19 @@ final class OnboardCategoryScreen extends ScreenHandler
             }
             $skills[] = $skill;
         }
-        $this->pros->replaceSkills($this->uid($request), $skills);
+        try {
+            $this->pros->replaceSkills($this->uid($request), $skills);
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'EXPERIENCE_EDIT_LOCKED') {
+                Response::fail(
+                    'Experience year is locked. Open Help and request admin approval to edit.',
+                    403,
+                    'experience_edit_locked',
+                );
+                return;
+            }
+            throw $e;
+        }
 
         Response::ok([
             'screen' => 'onboard_category',

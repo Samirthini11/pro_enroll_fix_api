@@ -71,6 +71,7 @@ final class AdminRepository
             'kyc_pending' => $kycPending,
             'docs_pending' => $docsPending,
             'wallet_recharges_pending' => (new WalletRechargeRepository())->pendingCount(),
+            'experience_edit_pending' => (new ExperienceEditRequestRepository())->pendingCount(),
             'approved_today' => $approvedToday,
             'rejected_today' => $rejectedToday,
             'total_verified_pros' => $totalVerified,

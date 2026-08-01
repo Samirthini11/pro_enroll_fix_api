@@ -102,7 +102,7 @@ final class ProRepository
             'full_name', 'display_name', 'city_id', 'home_lat', 'home_lng',
             'work_radius_km', 'visit_fee_paise',
             'is_available', 'kyc_status', 'kyc_rejected_reason',
-            'listing_held', 'free_bookings_used',
+            'listing_held', 'free_bookings_used', 'can_edit_experience',
             'aadhaar_last4', 'face_match_score', 'upi_id',
             'bank_account_no', 'bank_ifsc', 'language_code',
         ];
@@ -234,6 +234,23 @@ final class ProRepository
                 ?? \ProEnroll\Api\IstTime::startYearFromExperienceYears((int) ($row['experience_years'] ?? 0)));
         }
 
+        $yearsChanging = false;
+        foreach ($skills as $s) {
+            $code = (string) ($s['category_code'] ?? '');
+            if ($code === '' || !isset($existingStarts[$code])) {
+                continue;
+            }
+            $newStart = $this->resolveStartYearFromSkillInput($s, $existingStarts[$code]);
+            if ($newStart !== (int) $existingStarts[$code]) {
+                $yearsChanging = true;
+                break;
+            }
+        }
+
+        if ($yearsChanging && !$this->isExperienceEditAllowed($pro)) {
+            throw new \RuntimeException('EXPERIENCE_EDIT_LOCKED');
+        }
+
         $this->db->prepare('DELETE FROM professional_skills WHERE professional_id = ?')->execute([$proId]);
 
         $hasStart = $this->hasExperienceStartYearColumn();
@@ -286,6 +303,11 @@ final class ProRepository
         }
 
         $this->syncLegacyVisitFeeFromSkills($proId);
+
+        if ($yearsChanging && $this->canEditExperienceFlag($pro)) {
+            $this->setCanEditExperience($proId, false);
+            (new ExperienceEditRequestRepository())->markApprovedUsedForPro($proId);
+        }
     }
 
     /**
@@ -832,6 +854,8 @@ final class ProRepository
             'language_code' => $pro['language_code'] ?? 'en',
             'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
+            'can_edit_experience' => $this->isExperienceEditAllowed($pro),
+            'experience_edit_request_status' => $this->latestExperienceEditRequestStatus((int) $pro['id']),
             'skills' => array_map(static fn ($s) => [
                 'category_code' => $s['category_code'],
                 'experience_years' => (int) $s['experience_years'],
@@ -900,6 +924,71 @@ final class ProRepository
         $v = $stmt->fetchColumn();
 
         return (int) $v === 1;
+    }
+
+    /**
+     * After enrollment (name + city set), experience years are locked unless admin unlocks.
+     *
+     * @param array<string, mixed> $pro
+     */
+    public function isExperienceEditAllowed(array $pro): bool
+    {
+        // Feature off until migration 028 is applied.
+        if (!$this->hasCanEditExperienceColumn()) {
+            return true;
+        }
+
+        $enrolled = $pro['city_id'] !== null
+            && trim((string) ($pro['full_name'] ?? '')) !== '';
+        if (!$enrolled) {
+            return true;
+        }
+
+        return $this->canEditExperienceFlag($pro);
+    }
+
+    /** @param array<string, mixed> $pro */
+    public function canEditExperienceFlag(array $pro): bool
+    {
+        if (!$this->hasCanEditExperienceColumn()) {
+            return false;
+        }
+
+        return (int) ($pro['can_edit_experience'] ?? 0) === 1;
+    }
+
+    public function setCanEditExperience(int $professionalId, bool $allowed): void
+    {
+        if (!$this->hasCanEditExperienceColumn()) {
+            return;
+        }
+        $this->db->prepare(
+            'UPDATE professionals
+             SET can_edit_experience = ?, updated_at = NOW()
+             WHERE id = ?'
+        )->execute([$allowed ? 1 : 0, $professionalId]);
+    }
+
+    private function latestExperienceEditRequestStatus(int $professionalId): ?string
+    {
+        $row = (new ExperienceEditRequestRepository())->latestForProfessional($professionalId);
+        if ($row === null) {
+            return null;
+        }
+        $status = (string) ($row['status'] ?? '');
+
+        return $status !== '' ? $status : null;
+    }
+
+    private function hasCanEditExperienceColumn(): bool
+    {
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'can_edit_experience'");
+
+            return $stmt !== false && (bool) $stmt->fetch();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function hasListingHeldColumn(): bool
