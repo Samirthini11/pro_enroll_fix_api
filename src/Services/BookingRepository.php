@@ -1440,8 +1440,20 @@ final class BookingRepository
         if ($current === null) {
             return false;
         }
-        if ((string) $current['status'] === $dbStatus) {
+        $from = (string) ($current['status'] ?? '');
+        if ($from === $dbStatus) {
             return true;
+        }
+
+        // Strict one-step transitions — stops double-tap from skipping stages.
+        $allowedNext = match ($from) {
+            'confirmed' => ['en_route'],
+            'en_route' => ['arrived'],
+            'arrived' => ['in_progress'],
+            default => [],
+        };
+        if (!in_array($dbStatus, $allowedNext, true)) {
+            return false;
         }
 
         // Accept while busy is allowed; advancing a queued job is not.
@@ -1453,9 +1465,9 @@ final class BookingRepository
             "UPDATE service_bookings
              SET status = ?, updated_at = NOW()
              WHERE id = ? AND professional_id = ?
-               AND status IN ('en_route', 'arrived', 'in_progress', 'confirmed')"
+               AND status = ?"
         );
-        $stmt->execute([$dbStatus, $bookingId, $professionalId]);
+        $stmt->execute([$dbStatus, $bookingId, $professionalId, $from]);
 
         return $stmt->rowCount() > 0;
     }
