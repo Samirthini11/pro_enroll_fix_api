@@ -310,6 +310,34 @@ final class PushNotificationService
         );
     }
 
+    public function notifyCustomerOfferExpired(array $booking, ?array $pro = null): int
+    {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'The pro')) ?: 'The pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+        $code = trim((string) ($booking['booking_code'] ?? ''));
+
+        return $this->sendToTokens(
+            $tokens,
+            'Request expired',
+            "{$proName} did not accept your request"
+                . ($code !== '' ? " ({$code})" : '')
+                . ' within 1 hour. Please book another professional.',
+            [
+                'type' => 'booking_rejected',
+                'audience' => 'customer',
+                'booking_id' => $bookingId,
+                'status' => 'cancelled',
+                'route' => '/customer/bookings',
+            ],
+        );
+    }
+
     public function notifyCustomerJobStatus(array $booking, string $apiStatus, ?array $pro = null): int
     {
         $pro ??= $this->proForBooking($booking);

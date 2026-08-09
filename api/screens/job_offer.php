@@ -133,7 +133,12 @@ final class JobOfferScreen extends ScreenHandler
             }
 
             $offer = $bookings->findOfferForProfessional($bookingId, $proId);
-            $visitFee = $offer !== null ? (int) ($offer['visit_fee_paise'] ?? 0) : null;
+            if ($offer === null) {
+                Response::fail('Offer expired or already handled', 410, 'offer_expired');
+                return;
+            }
+
+            $visitFee = (int) ($offer['visit_fee_paise'] ?? 0);
             $gate = $bookings->acceptWalletGate($proId, $visitFee);
             if (!$gate['ok']) {
                 Response::fail($gate['message'], 403, 'wallet_limit');
@@ -144,7 +149,7 @@ final class JobOfferScreen extends ScreenHandler
 
             if ($acceptedRow === null) {
 
-                Response::fail('Offer not found or already handled', 404);
+                Response::fail('Offer expired or already handled', 410, 'offer_expired');
 
                 return;
 

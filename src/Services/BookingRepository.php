@@ -431,6 +431,96 @@ final class BookingRepository
     }
 
     /**
+     * Auto-cancel confirmed offers the pro did not accept before scheduled_at
+     * (default booking window ≈ 1 hour). Notifies each customer once.
+     *
+     * @return int number of bookings cancelled
+     */
+    public function expireStaleConfirmedOffers(): int
+    {
+        $stmt = $this->db->query(
+            "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
+             FROM service_bookings b
+             INNER JOIN customers c ON c.id = b.customer_id
+             WHERE b.status = 'confirmed'
+               AND COALESCE(b.scheduled_at, DATE_ADD(b.created_at, INTERVAL 1 HOUR)) < NOW()
+             ORDER BY COALESCE(b.scheduled_at, b.created_at) ASC
+             LIMIT 100"
+        );
+        $rows = $stmt !== false ? $stmt->fetchAll() : [];
+        if ($rows === false || $rows === []) {
+            return 0;
+        }
+
+        $reason = 'Offer expired — professional did not accept in time';
+        $done = 0;
+        foreach ($rows as $row) {
+            $bookingId = (int) $row['id'];
+            if ($this->hasCancelReasonColumn() && $this->hasCancelledByColumns()) {
+                // Leave cancelled_by NULL so this does not count against daily cancel limits.
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'cancelled',
+                         cancel_reason = ?,
+                         cancelled_by = NULL,
+                         cancelled_at = NOW(),
+                         updated_at = NOW()
+                     WHERE id = ? AND status = 'confirmed'"
+                );
+                $upd->execute([$reason, $bookingId]);
+            } elseif ($this->hasCancelReasonColumn()) {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'cancelled',
+                         cancel_reason = ?,
+                         updated_at = NOW()
+                     WHERE id = ? AND status = 'confirmed'"
+                );
+                $upd->execute([$reason, $bookingId]);
+            } elseif ($this->hasCancelledByColumns()) {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'cancelled',
+                         cancelled_by = NULL,
+                         cancelled_at = NOW(),
+                         updated_at = NOW()
+                     WHERE id = ? AND status = 'confirmed'"
+                );
+                $upd->execute([$bookingId]);
+            } else {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'cancelled', updated_at = NOW()
+                     WHERE id = ? AND status = 'confirmed'"
+                );
+                $upd->execute([$bookingId]);
+            }
+
+            if ($upd->rowCount() === 0) {
+                continue;
+            }
+            $done++;
+            $row['status'] = 'cancelled';
+            $row['cancel_reason'] = $reason;
+            BookingPushNotifier::offerExpiredForCustomer($row);
+        }
+
+        return $done;
+    }
+
+    /** @param array<string, mixed> $row */
+    public function isOfferExpired(array $row): bool
+    {
+        $scheduled = strtotime((string) ($row['scheduled_at'] ?? ''));
+        if ($scheduled === false || $scheduled <= 0) {
+            $created = strtotime((string) ($row['created_at'] ?? '')) ?: time();
+            $scheduled = $created + 3600;
+        }
+
+        return $scheduled < time();
+    }
+
+    /**
      * Auto-complete jobs stuck in awaiting_payment after the configured hours.
      * Treats unpaid visit fee as settled offline (method = timeout) and settles wallet.
      *
@@ -776,6 +866,8 @@ final class BookingRepository
             return [];
         }
 
+        $this->expireStaleConfirmedOffers();
+
         $placeholders = implode(',', array_fill(0, count($categoryCodes), '?'));
         $stmt = $this->db->prepare(
             "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
@@ -784,6 +876,7 @@ final class BookingRepository
              WHERE b.professional_id = ?
                AND b.status = 'confirmed'
                AND b.category_code IN ($placeholders)
+               AND COALESCE(b.scheduled_at, DATE_ADD(b.created_at, INTERVAL 1 HOUR)) >= NOW()
              ORDER BY b.created_at DESC"
         );
         $stmt->execute(array_merge([$professionalId], $categoryCodes));
@@ -881,6 +974,8 @@ final class BookingRepository
 
     public function findOfferForProfessional(int $bookingId, int $professionalId): ?array
     {
+        $this->expireStaleConfirmedOffers();
+
         $stmt = $this->db->prepare(
             "SELECT b.*, c.full_name AS customer_name, c.phone_e164 AS customer_phone
              FROM service_bookings b
@@ -890,12 +985,28 @@ final class BookingRepository
         );
         $stmt->execute([$bookingId, $professionalId]);
         $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+        if ($this->isOfferExpired($row)) {
+            $this->expireStaleConfirmedOffers();
+            return null;
+        }
 
-        return $row ?: null;
+        return $row;
     }
 
     public function acceptOffer(int $bookingId, int $professionalId): ?array
     {
+        $offer = $this->findOfferForProfessional($bookingId, $professionalId);
+        if ($offer === null) {
+            return null;
+        }
+        if ($this->isOfferExpired($offer)) {
+            $this->expireStaleConfirmedOffers();
+            return null;
+        }
+
         $trackLat = null;
         $trackLng = null;
         $pros = new ProRepository();
@@ -917,13 +1028,15 @@ final class BookingRepository
             $params[] = $trackLng;
         }
         $sql = 'UPDATE service_bookings SET ' . implode(', ', $sets)
-            . ' WHERE id = ? AND professional_id = ? AND status = \'confirmed\'';
+            . ' WHERE id = ? AND professional_id = ? AND status = \'confirmed\''
+            . ' AND COALESCE(scheduled_at, DATE_ADD(created_at, INTERVAL 1 HOUR)) >= NOW()';
         $params[] = $bookingId;
         $params[] = $professionalId;
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
         if ($stmt->rowCount() === 0) {
+            $this->expireStaleConfirmedOffers();
             return null;
         }
 

@@ -126,6 +126,7 @@ final class BookingDetailEndpoint
             return;
         }
 
+        $bookings->expireStaleConfirmedOffers();
         $bookings->autoCompleteStaleAwaitingPayments();
         $row = $bookings->findByIdForCustomer($bookingId, $customerId);
         if ($row === null) {

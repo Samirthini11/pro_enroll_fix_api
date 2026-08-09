@@ -40,6 +40,14 @@ final class BookingPushNotifier
         self::safe(static fn () => (new PushNotificationService())->notifyCustomerBookingRejected($booking, $pro));
     }
 
+    public static function offerExpiredForCustomer(array $booking, ?array $pro = null): void
+    {
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyCustomerOfferExpired($booking, $pro),
+            'offer_expired_customer',
+        );
+    }
+
     public static function statusForCustomer(array $booking, string $status, ?array $pro = null): void
     {
         self::safe(static fn () => (new PushNotificationService())->notifyCustomerJobStatus($booking, $status, $pro));
