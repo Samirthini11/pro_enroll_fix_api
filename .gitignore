@@ -3,3 +3,5 @@
 config/firebase-service-account.json
 /storage/logs/*.log
 !.gitkeep
+
+.env.remote
