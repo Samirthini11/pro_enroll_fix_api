@@ -1461,6 +1461,11 @@ final class BookingRepository
             return false;
         }
 
+        // Start work requires customer OTP verification + wallet charge.
+        if ($dbStatus === 'in_progress' && !$this->isStartWorkVerified($bookingId)) {
+            return false;
+        }
+
         $stmt = $this->db->prepare(
             "UPDATE service_bookings
              SET status = ?, updated_at = NOW()
@@ -1470,6 +1475,365 @@ final class BookingRepository
         $stmt->execute([$dbStatus, $bookingId, $professionalId, $from]);
 
         return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * Send 6-digit OTP to the customer so the pro can start work after arrival.
+     *
+     * @return array{request_id: string, expires_in: int, phone_masked: string, commission_paise: int, debug_otp?: string}
+     */
+    public function sendStartWorkOtp(int $bookingId, int $professionalId): array
+    {
+        $row = $this->findActiveForProfessional($professionalId, $bookingId);
+        if ($row === null || (string) ($row['status'] ?? '') !== 'arrived') {
+            throw new \InvalidArgumentException('Mark arrived before requesting start OTP');
+        }
+
+        $phone = trim((string) ($row['customer_phone'] ?? ''));
+        if ($phone === '') {
+            throw new \InvalidArgumentException('Customer phone not available for OTP');
+        }
+
+        $this->ensureStartOtpTable();
+
+        // Invalidate previous unused OTPs for this booking.
+        $this->db->prepare(
+            'UPDATE booking_start_otps
+             SET verified_at = COALESCE(verified_at, NOW())
+             WHERE booking_id = ? AND verified_at IS NULL'
+        )->execute([$bookingId]);
+
+        $otp = (string) random_int(100000, 999999);
+        // Dev convenience — same as auth OTP when debug is on.
+        if (\ProEnroll\Api\Config::bool('APP_DEBUG', false)
+            || \ProEnroll\Api\Config::bool('OTP_DEBUG_RETURN', false)
+        ) {
+            $otp = '123456';
+        }
+
+        $requestId = bin2hex(random_bytes(16));
+        $ttl = (int) \ProEnroll\Api\Config::get('OTP_EXPIRY_SECONDS', '600');
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO booking_start_otps
+                (booking_id, request_id, phone_e164, otp_code, expires_at, created_at)
+             VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), NOW())'
+        );
+        $stmt->execute([$bookingId, $requestId, $phone, $otp, $ttl]);
+
+        $preview = $this->commissionPreviewForPro(
+            $professionalId,
+            (int) ($row['visit_fee_paise'] ?? 0),
+        );
+
+        $out = [
+            'request_id' => $requestId,
+            'expires_in' => $ttl,
+            'phone_masked' => ProRepository::maskPhone($phone),
+            'commission_paise' => (int) ($preview['commission_paise'] ?? 0),
+            'commission_label' => (string) ($preview['label'] ?? ''),
+            // Used server-side for customer push; stripped before API response.
+            'notify_otp' => $otp,
+        ];
+        if (\ProEnroll\Api\Config::bool('OTP_DEBUG_RETURN', false)
+            || \ProEnroll\Api\Config::bool('APP_DEBUG', false)
+        ) {
+            $out['debug_otp'] = $otp;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Verify customer OTP, charge platform fee from pro wallet, then start work.
+     *
+     * @return array<string, mixed> updated booking row
+     */
+    public function verifyStartWorkOtpAndBegin(
+        int $bookingId,
+        int $professionalId,
+        string $requestId,
+        string $otp,
+    ): array {
+        $row = $this->findActiveForProfessional($professionalId, $bookingId);
+        if ($row === null || (string) ($row['status'] ?? '') !== 'arrived') {
+            throw new \InvalidArgumentException('Job must be arrived to start work');
+        }
+
+        // Resume if OTP + wallet already succeeded but status update failed.
+        if ($this->isStartWorkVerified($bookingId)) {
+            $charge = $this->chargePlatformFeeAtStart($bookingId, $professionalId);
+            if (!$charge['ok']) {
+                throw new \RuntimeException($charge['message']);
+            }
+            if (!$this->updateActiveJobStatus($bookingId, $professionalId, 'in_progress')) {
+                $upd = $this->db->prepare(
+                    "UPDATE service_bookings
+                     SET status = 'in_progress', updated_at = NOW()
+                     WHERE id = ? AND professional_id = ? AND status = 'arrived'"
+                );
+                $upd->execute([$bookingId, $professionalId]);
+            }
+            $updated = $this->findActiveForProfessional($professionalId, $bookingId)
+                ?? $this->findById($bookingId);
+            if ($updated === null) {
+                throw new \RuntimeException('Job not found after start');
+            }
+
+            return $updated;
+        }
+
+        $this->ensureStartOtpTable();
+        $stmt = $this->db->prepare(
+            'SELECT id, phone_e164, otp_code, expires_at, verified_at
+             FROM booking_start_otps
+             WHERE request_id = ? AND booking_id = ?
+             LIMIT 1'
+        );
+        $stmt->execute([trim($requestId), $bookingId]);
+        $otpRow = $stmt->fetch();
+        if ($otpRow === false) {
+            throw new \InvalidArgumentException('Invalid or expired OTP request');
+        }
+        if ($otpRow['verified_at'] !== null) {
+            throw new \InvalidArgumentException('OTP already used — request a new one');
+        }
+        if (strtotime((string) $otpRow['expires_at']) < time()) {
+            throw new \InvalidArgumentException('OTP expired — request a new one');
+        }
+
+        $this->db->prepare(
+            'UPDATE booking_start_otps SET attempt_count = attempt_count + 1 WHERE id = ?'
+        )->execute([(int) $otpRow['id']]);
+
+        if (!hash_equals((string) $otpRow['otp_code'], trim($otp))) {
+            throw new \InvalidArgumentException('Incorrect OTP');
+        }
+
+        // Charge first; only then mark OTP verified.
+        $charge = $this->chargePlatformFeeAtStart($bookingId, $professionalId);
+        if (!$charge['ok']) {
+            throw new \RuntimeException($charge['message']);
+        }
+
+        $this->db->prepare(
+            'UPDATE booking_start_otps SET verified_at = NOW() WHERE id = ?'
+        )->execute([(int) $otpRow['id']]);
+
+        if ($this->hasStartWorkVerifiedColumn()) {
+            $this->db->prepare(
+                'UPDATE service_bookings
+                 SET start_work_verified_at = COALESCE(start_work_verified_at, NOW()),
+                     updated_at = NOW()
+                 WHERE id = ? AND professional_id = ?'
+            )->execute([$bookingId, $professionalId]);
+        }
+
+        if (!$this->updateActiveJobStatus($bookingId, $professionalId, 'in_progress')) {
+            $upd = $this->db->prepare(
+                "UPDATE service_bookings
+                 SET status = 'in_progress', updated_at = NOW()
+                 WHERE id = ? AND professional_id = ? AND status = 'arrived'"
+            );
+            $upd->execute([$bookingId, $professionalId]);
+            if ($upd->rowCount() === 0) {
+                throw new \RuntimeException('Could not start work after OTP');
+            }
+        }
+
+        $updated = $this->findActiveForProfessional($professionalId, $bookingId)
+            ?? $this->findById($bookingId);
+        if ($updated === null) {
+            throw new \RuntimeException('Job not found after start');
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Debit visit-fee commission from prepaid wallet when work starts (after OTP).
+     * Idempotent via wallet ledger. Does not settle pro_credit / jobs_completed
+     * (those still run at job completion).
+     *
+     * @return array{ok: bool, commission_paise: int, message: string}
+     */
+    public function chargePlatformFeeAtStart(int $bookingId, int $professionalId): array
+    {
+        $row = $this->findById($bookingId);
+        if ($row === null || (int) $row['professional_id'] !== $professionalId) {
+            return ['ok' => false, 'commission_paise' => 0, 'message' => 'Booking not found'];
+        }
+
+        $settings = new PlatformSettingsRepository();
+        $freeLimit = $settings->freeBookingLimit();
+        $percent = $settings->visitCommissionPercent();
+        $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
+        $completed = $this->completedJobsCount($professionalId);
+        $isFree = $completed < $freeLimit;
+        $commission = 0;
+        if (!$isFree && $percent > 0 && $visitFee > 0) {
+            $commission = (int) round($visitFee * $percent / 100);
+        }
+
+        if ($commission <= 0) {
+            if ($this->hasCommissionColumns()) {
+                $this->db->prepare(
+                    'UPDATE service_bookings
+                     SET commission_paise = 0, commission_waived = 1, updated_at = NOW()
+                     WHERE id = ? AND pro_credit_paise IS NULL'
+                )->execute([$bookingId]);
+            }
+
+            return [
+                'ok' => true,
+                'commission_paise' => 0,
+                'message' => 'Free booking — no wallet deduction',
+            ];
+        }
+
+        $balance = $this->netWalletPaise($professionalId);
+        $ledger = new WalletLedgerRepository();
+        if ($ledger->tableExists()) {
+            $exists = $this->db->prepare(
+                "SELECT id FROM pro_wallet_ledger
+                 WHERE booking_id = ? AND entry_type = 'commission_debit' LIMIT 1"
+            );
+            $exists->execute([$bookingId]);
+            if ($exists->fetch()) {
+                $this->markBookingCommissionPaidFromWallet($bookingId);
+
+                return [
+                    'ok' => true,
+                    'commission_paise' => $commission,
+                    'message' => 'Already charged',
+                ];
+            }
+        }
+
+        if ($balance < $commission) {
+            $need = (int) round($commission / 100);
+
+            return [
+                'ok' => false,
+                'commission_paise' => $commission,
+                'message' => "Wallet balance too low. Recharge at least ₹{$need} to start this job.",
+            ];
+        }
+
+        if ($ledger->tableExists()) {
+            $ledger->debitCommission($professionalId, $bookingId, $commission);
+            $this->markBookingCommissionPaidFromWallet($bookingId);
+        }
+
+        if ($this->hasCommissionColumns()) {
+            $this->db->prepare(
+                'UPDATE service_bookings
+                 SET commission_paise = ?, commission_waived = 0, updated_at = NOW()
+                 WHERE id = ? AND pro_credit_paise IS NULL'
+            )->execute([$commission, $bookingId]);
+        }
+
+        $this->syncListingHoldForWallet($professionalId);
+
+        return [
+            'ok' => true,
+            'commission_paise' => $commission,
+            'message' => 'OK',
+        ];
+    }
+
+    public function isStartWorkVerified(int $bookingId): bool
+    {
+        if ($this->hasStartWorkVerifiedColumn()) {
+            $stmt = $this->db->prepare(
+                'SELECT start_work_verified_at FROM service_bookings WHERE id = ? LIMIT 1'
+            );
+            $stmt->execute([$bookingId]);
+            $val = $stmt->fetchColumn();
+            if ($val !== false && $val !== null && (string) $val !== '') {
+                return true;
+            }
+        }
+
+        try {
+            $this->ensureStartOtpTable();
+            $stmt = $this->db->prepare(
+                'SELECT 1 FROM booking_start_otps
+                 WHERE booking_id = ? AND verified_at IS NOT NULL
+                 LIMIT 1'
+            );
+            $stmt->execute([$bookingId]);
+
+            return (bool) $stmt->fetchColumn();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private ?bool $hasStartWorkVerified = null;
+
+    private function hasStartWorkVerifiedColumn(): bool
+    {
+        if ($this->hasStartWorkVerified !== null) {
+            return $this->hasStartWorkVerified;
+        }
+        try {
+            $stmt = $this->db->query(
+                "SHOW COLUMNS FROM service_bookings LIKE 'start_work_verified_at'"
+            );
+            $this->hasStartWorkVerified = $stmt !== false && (bool) $stmt->fetch();
+            if (!$this->hasStartWorkVerified) {
+                try {
+                    $this->db->exec(
+                        'ALTER TABLE service_bookings
+                         ADD COLUMN start_work_verified_at DATETIME NULL DEFAULT NULL'
+                    );
+                    $this->hasStartWorkVerified = true;
+                } catch (\Throwable) {
+                    $this->hasStartWorkVerified = false;
+                }
+            }
+        } catch (\Throwable) {
+            $this->hasStartWorkVerified = false;
+        }
+
+        return $this->hasStartWorkVerified;
+    }
+
+    private ?bool $hasStartOtpTable = null;
+
+    private function ensureStartOtpTable(): void
+    {
+        if ($this->hasStartOtpTable === true) {
+            return;
+        }
+        try {
+            $stmt = $this->db->query("SHOW TABLES LIKE 'booking_start_otps'");
+            if ($stmt !== false && $stmt->fetch()) {
+                $this->hasStartOtpTable = true;
+
+                return;
+            }
+        } catch (\Throwable) {
+        }
+
+        // Auto-create if migration not run yet (dev / live without migrate).
+        $this->db->exec(
+            "CREATE TABLE IF NOT EXISTS booking_start_otps (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                booking_id BIGINT UNSIGNED NOT NULL,
+                request_id CHAR(32) NOT NULL,
+                phone_e164 VARCHAR(20) NOT NULL,
+                otp_code CHAR(6) NOT NULL,
+                expires_at DATETIME NOT NULL,
+                verified_at DATETIME NULL DEFAULT NULL,
+                attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_booking_start_otp_request (request_id),
+                KEY idx_booking_start_otp_booking (booking_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        );
+        $this->hasStartOtpTable = true;
     }
 
     public function completeActiveJob(int $bookingId, int $professionalId, ?int $finalAmountPaise = null): bool
@@ -1617,6 +1981,7 @@ final class BookingRepository
         }
 
         // Deduct platform fee from prepaid wallet and mark fee settled.
+        // May already be charged at start-work OTP verify — ledger is idempotent.
         if ($commission > 0) {
             $ledger = new WalletLedgerRepository();
             if ($ledger->tableExists()) {

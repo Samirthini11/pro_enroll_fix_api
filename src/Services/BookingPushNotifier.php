@@ -48,6 +48,23 @@ final class BookingPushNotifier
         );
     }
 
+    public static function startWorkOtpForCustomer(
+        array $booking,
+        ?array $pro,
+        string $otp,
+        int $expiresIn = 600,
+    ): void {
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyCustomerStartWorkOtp(
+                $booking,
+                $pro,
+                $otp,
+                $expiresIn,
+            ),
+            'start_work_otp_customer',
+        );
+    }
+
     public static function statusForCustomer(array $booking, string $status, ?array $pro = null): void
     {
         self::safe(static fn () => (new PushNotificationService())->notifyCustomerJobStatus($booking, $status, $pro));

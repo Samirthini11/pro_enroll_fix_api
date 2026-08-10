@@ -338,6 +338,44 @@ final class PushNotificationService
         );
     }
 
+    public function notifyCustomerStartWorkOtp(
+        array $booking,
+        ?array $pro,
+        string $otp,
+        int $expiresIn = 600,
+    ): int {
+        $pro ??= $this->proForBooking($booking);
+        $tokens = $this->customerTokensForBooking($booking);
+        if ($tokens === []) {
+            return 0;
+        }
+
+        $proName = trim((string) ($pro['full_name'] ?? 'Your pro')) ?: 'Your pro';
+        $bookingId = (string) ($booking['id'] ?? '');
+        $mins = max(1, (int) round($expiresIn / 60));
+        $body = $otp !== ''
+            ? "{$proName} is ready to start. Share OTP {$otp} with them (valid {$mins} min)."
+            : "{$proName} is ready to start. Share the OTP you received with them (valid {$mins} min).";
+
+        $data = [
+            'type' => 'start_work_otp',
+            'audience' => 'customer',
+            'booking_id' => $bookingId,
+            'status' => 'arrived',
+            'route' => '/customer/bookings',
+        ];
+        if ($otp !== '') {
+            $data['otp'] = $otp;
+        }
+
+        return $this->sendToTokens(
+            $tokens,
+            'Confirm start work',
+            $body,
+            $data,
+        );
+    }
+
     public function notifyCustomerJobStatus(array $booking, string $apiStatus, ?array $pro = null): int
     {
         $pro ??= $this->proForBooking($booking);

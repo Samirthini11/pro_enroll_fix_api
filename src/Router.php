@@ -44,6 +44,7 @@ use ProEnroll\Api\Endpoints\Customer\BookingDetailEndpoint;
 use ProEnroll\Api\Endpoints\Customer\BookingsEndpoint;
 use ProEnroll\Api\Endpoints\Customer\CategoriesEndpoint;
 use ProEnroll\Api\Endpoints\Reference\CategoriesEndpoint as ReferenceCategoriesEndpoint;
+use ProEnroll\Api\Endpoints\Reference\CitiesEndpoint as ReferenceCitiesEndpoint;
 use ProEnroll\Api\Endpoints\Customer\CitiesEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProDetailEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProfileEndpoint;
@@ -102,6 +103,7 @@ final class Router
         'PUT /v1/screens/job-active' => JobActiveScreen::class,
         'POST /v1/screens/job-active' => JobActiveScreen::class,
         'GET /v1/categories' => ReferenceCategoriesEndpoint::class,
+        'GET /v1/cities' => ReferenceCitiesEndpoint::class,
         'GET /v1/customer/categories' => CategoriesEndpoint::class,
         'GET /v1/customer/cities' => CitiesEndpoint::class,
         'GET /v1/customer/pros/search' => ProsSearchEndpoint::class,

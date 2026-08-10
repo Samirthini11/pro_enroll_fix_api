@@ -145,6 +145,17 @@ final class JobActiveScreen extends ScreenHandler
                     return;
                 }
 
+                if ((string) $status === 'in_progress'
+                    && !$bookings->isStartWorkVerified($bookingId)
+                ) {
+                    Response::fail(
+                        'Ask the customer for the OTP, then verify to start work.',
+                        403,
+                        'start_otp_required',
+                    );
+                    return;
+                }
+
                 $statusUpdated = $bookings->updateActiveJobStatus(
                     $bookingId,
                     $proId,
@@ -252,6 +263,84 @@ final class JobActiveScreen extends ScreenHandler
                     'screen' => 'job_active',
                     'status' => 'completed',
                     'payment_due' => false,
+                    'active_job' => $bookings->activeJobPayload($row, $proLat, $proLng),
+                ]);
+                return;
+            }
+
+            if ($action === 'send_start_otp') {
+                try {
+                    $sent = $bookings->sendStartWorkOtp($bookingId, $proId);
+                } catch (\InvalidArgumentException $e) {
+                    Response::fail($e->getMessage(), 422, 'start_otp_send_failed');
+                    return;
+                } catch (\Throwable $e) {
+                    Response::fail(
+                        \ProEnroll\Api\Config::bool('APP_DEBUG') ? $e->getMessage() : 'Could not send OTP',
+                        500,
+                        'start_otp_send_failed',
+                    );
+                    return;
+                }
+
+                $row = $bookings->findActiveForProfessional($proId, $bookingId);
+                if ($row !== null) {
+                    BookingPushNotifier::startWorkOtpForCustomer(
+                        $row,
+                        $pro,
+                        (string) ($sent['notify_otp'] ?? ''),
+                        (int) ($sent['expires_in'] ?? 600),
+                    );
+                }
+                unset($sent['notify_otp']);
+
+                Response::ok(array_merge([
+                    'screen' => 'job_active',
+                    'action' => 'send_start_otp',
+                ], $sent));
+                return;
+            }
+
+            if ($action === 'verify_start_otp') {
+                $requestId = trim((string) $request->input('request_id', ''));
+                $otp = trim((string) $request->input('otp', ''));
+                if ($requestId === '' || strlen($otp) < 4) {
+                    Response::fail('Enter the 6-digit OTP from the customer', 422, 'otp_required');
+                    return;
+                }
+
+                try {
+                    $row = $bookings->verifyStartWorkOtpAndBegin(
+                        $bookingId,
+                        $proId,
+                        $requestId,
+                        $otp,
+                    );
+                } catch (\InvalidArgumentException $e) {
+                    Response::fail($e->getMessage(), 422, 'start_otp_invalid');
+                    return;
+                } catch (\RuntimeException $e) {
+                    Response::fail($e->getMessage(), 402, 'wallet_low');
+                    return;
+                } catch (\Throwable $e) {
+                    Response::fail(
+                        \ProEnroll\Api\Config::bool('APP_DEBUG') ? $e->getMessage() : 'Could not verify OTP',
+                        500,
+                        'start_otp_verify_failed',
+                    );
+                    return;
+                }
+
+                BookingPushNotifier::statusForCustomer($row, 'in_progress', $pro);
+
+                $pro = $this->pros->findById($proId) ?? $pro;
+                [$proLat, $proLng] = $this->proCoords($pro);
+
+                Response::ok([
+                    'screen' => 'job_active',
+                    'action' => 'verify_start_otp',
+                    'status' => 'in_progress',
+                    'wallet_charged' => true,
                     'active_job' => $bookings->activeJobPayload($row, $proLat, $proLng),
                 ]);
                 return;

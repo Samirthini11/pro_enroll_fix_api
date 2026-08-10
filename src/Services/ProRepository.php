@@ -660,7 +660,7 @@ final class ProRepository
                 $categoryCode,
                 $customerLat,
                 $customerLng,
-                enforceRadius: $hadCustomerGps,
+                enforceRadius: false,
             );
             if ($item !== null) {
                 $out[] = $item;
