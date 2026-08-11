@@ -11,6 +11,7 @@ use ProEnroll\Api\Services\AdminRepository;
 
 /**
  * GET  /v1/admin/documents?kind=shop_photo&status=pending
+ * GET  /v1/admin/documents/:id
  * POST /v1/admin/documents/:id/approve
  * POST /v1/admin/documents/:id/reject
  */
@@ -34,6 +35,16 @@ final class AdminDocumentsEndpoint
                         $status !== '' ? $status : null,
                     ),
                 ]);
+                return;
+            }
+
+            if ($request->method === 'GET' && $documentId !== null && $action === null) {
+                $item = $repo->documentById($documentId);
+                if ($item === null) {
+                    Response::fail('Document not found', 404, 'not_found');
+                    return;
+                }
+                Response::ok(['item' => $item]);
                 return;
             }
 

@@ -199,6 +199,11 @@ final class Router
             return;
         }
 
+        if (preg_match('#^GET /v1/admin/documents/(\d+)$#', $key, $m)) {
+            (new AdminDocumentsEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
         if (preg_match('#^GET /v1/admin/professionals/(\d+)/bookings$#', $key, $m)) {
             (new AdminProfessionalsEndpoint())->handle($request, (int) $m[1], 'bookings');
             return;

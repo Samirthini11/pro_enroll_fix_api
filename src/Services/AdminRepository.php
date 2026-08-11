@@ -408,6 +408,28 @@ final class AdminRepository
         return $out;
     }
 
+    /** @return array<string, mixed>|null */
+    public function documentById(int $documentId): ?array
+    {
+        if (!$this->hasProDocumentsTable()) {
+            return null;
+        }
+
+        $sql = 'SELECT d.*, p.full_name, ' . $this->proDisplayNameSelectSql('p') . ', p.city_id
+                FROM pro_documents d
+                INNER JOIN professionals p ON p.id = d.professional_id
+                WHERE d.id = ?
+                LIMIT 1';
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$documentId]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        return $this->buildDocumentPayload($row);
+    }
+
     public function approveDocument(int $documentId): bool
     {
         if (!$this->hasProDocumentsTable()) {
@@ -448,7 +470,7 @@ final class AdminRepository
             'shop' => ['kind' => 'shop_photo', 'label' => 'Shop / workshop photo'],
             'shop_photo' => ['kind' => 'shop_photo', 'label' => 'Shop / workshop photo'],
             'cert' => ['kind' => 'cert', 'label' => 'Training certificate'],
-            'tools' => ['kind' => 'cert', 'label' => 'Tools / training certificate'],
+            'tools' => ['kind' => 'shop_photo', 'label' => 'Tools / workshop photo'],
             'pan' => ['kind' => 'pan', 'label' => 'PAN card'],
         ];
 
@@ -471,14 +493,12 @@ final class AdminRepository
             return;
         }
 
+        // Only seed placeholders when missing — never auto-approve without an image URL.
         if (!empty($pro['aadhaar_last4'])) {
-            $this->insertDocumentIfMissing($professionalId, 'aadhaar', 'Aadhaar (masked)', 'approved');
+            $this->insertDocumentIfMissing($professionalId, 'aadhaar', 'Aadhaar (masked)', 'pending');
         }
 
-        $selfieStatus = in_array((string) $pro['kyc_status'], ['in_review', 'verified'], true)
-            ? 'approved'
-            : 'pending';
-        $this->insertDocumentIfMissing($professionalId, 'selfie', 'Selfie + face match', $selfieStatus);
+        $this->insertDocumentIfMissing($professionalId, 'selfie', 'Selfie + face match', 'pending');
     }
 
     private function insertDocumentIfMissing(
@@ -569,12 +589,14 @@ final class AdminRepository
 
         $out = [];
         foreach ($stmt->fetchAll() as $row) {
+            $viewUrl = $this->resolveDocumentViewUrl($row);
             $out[] = [
                 'id' => (int) $row['id'],
                 'kind' => $row['kind'],
                 'label' => $row['label'],
                 'status' => $row['status'],
-                'thumbnail_url' => $row['thumbnail_url'],
+                'file_url' => $viewUrl,
+                'thumbnail_url' => $viewUrl,
                 'uploaded_at' => $row['uploaded_at'],
                 'rejected_reason' => $row['rejected_reason'],
             ];
@@ -593,6 +615,7 @@ final class AdminRepository
         }
 
         $proName = (string) ($row['display_name'] ?? $row['full_name'] ?? 'Pro');
+        $viewUrl = $this->resolveDocumentViewUrl($row);
 
         return [
             'document_id' => (int) $row['id'],
@@ -603,12 +626,46 @@ final class AdminRepository
             'label' => $row['label'],
             'submitted_at' => $row['uploaded_at'],
             'status' => $row['status'],
-            'thumbnail_url' => $row['thumbnail_url'],
+            'file_url' => $viewUrl,
+            'thumbnail_url' => $viewUrl,
             'rejected_reason' => $row['rejected_reason'],
             'notes' => $row['kind'] === 'shop_photo'
                 ? 'Verify shop/workshop matches registered address'
                 : 'Verify training certificate authenticity',
         ];
+    }
+
+    /**
+     * Prefer file_url, fall back to thumbnail_url, and presign private S3 objects.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function resolveDocumentViewUrl(array $row): ?string
+    {
+        $raw = '';
+        if ($this->hasColumn('pro_documents', 'file_url')) {
+            $raw = trim((string) ($row['file_url'] ?? ''));
+        }
+        if ($raw === '') {
+            $raw = trim((string) ($row['thumbnail_url'] ?? ''));
+        }
+        if ($raw === '') {
+            return null;
+        }
+
+        try {
+            $s3 = new S3StorageService();
+            if ($s3->isConfigured()) {
+                $signed = $s3->presignGetUrl($raw, 3600);
+                if (is_string($signed) && $signed !== '') {
+                    return $signed;
+                }
+            }
+        } catch (\Throwable) {
+            // Fall back to the stored URL.
+        }
+
+        return $raw;
     }
 
     private function mapReviewStatus(string $status): string
