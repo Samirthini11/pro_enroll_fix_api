@@ -135,7 +135,21 @@ final class ProRepository
         $params[] = $uid;
         $sql = 'UPDATE professionals SET ' . implode(', ', $sets) . ' WHERE firebase_uid = ?';
         $this->db->prepare($sql)->execute($params);
-        return $this->findByFirebaseUid($uid) ?? [];
+        $updated = $this->findByFirebaseUid($uid) ?? [];
+
+        if (
+            $updated !== []
+            && (
+                array_key_exists('kyc_status', $fields)
+                || array_key_exists('face_match_score', $fields)
+                || array_key_exists('aadhaar_last4', $fields)
+            )
+        ) {
+            (new ProScoreService($this->db))->recalculate((int) $updated['id']);
+            $updated = $this->findByFirebaseUid($uid) ?? $updated;
+        }
+
+        return $updated;
     }
 
     /** Minutes without heartbeat before an "online" pro is hidden from customers. */
@@ -765,6 +779,7 @@ final class ProRepository
             'rating_count' => (int) $pro['rating_count'],
             'jobs_completed' => (int) $pro['jobs_completed'],
             'pro_score' => (int) $pro['pro_score'],
+            'profile_photo_url' => $this->resolveProfilePhotoUrl((int) $pro['id']),
             'distance_km' => $dist,
             'home_lat' => $proLat,
             'home_lng' => $proLng,
@@ -833,7 +848,9 @@ final class ProRepository
         if ($pro === null) {
             return ['registered' => false];
         }
-        $skills = $this->getSkills((int) $pro['id']);
+        $proId = (int) $pro['id'];
+        $proScore = (new ProScoreService($this->db))->recalculate($proId);
+        $skills = $this->getSkills($proId);
         return [
             'registered' => true,
             'full_name' => $pro['full_name'],
@@ -850,7 +867,8 @@ final class ProRepository
             'rating_avg' => (float) $pro['rating_avg'],
             'rating_count' => (int) $pro['rating_count'],
             'jobs_completed' => (int) $pro['jobs_completed'],
-            'pro_score' => (int) $pro['pro_score'],
+            'pro_score' => $proScore,
+            'profile_photo_url' => $this->resolveProfilePhotoUrl($proId),
             'language_code' => $pro['language_code'] ?? 'en',
             'free_bookings_used' => (int) ($pro['free_bookings_used'] ?? 0),
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
@@ -866,11 +884,72 @@ final class ProRepository
         ];
     }
 
+    /**
+     * KYC selfie (or approved selfie doc) used as the pro's profile photo.
+     * Returns a viewable URL (presigned when S3 is private).
+     */
+    public function resolveProfilePhotoUrl(int $professionalId): ?string
+    {
+        try {
+            $hasFileUrl = false;
+            try {
+                $col = $this->db->query("SHOW COLUMNS FROM pro_documents LIKE 'file_url'");
+                $hasFileUrl = $col && $col->fetch() !== false;
+            } catch (\Throwable) {
+            }
+
+            $select = $hasFileUrl
+                ? 'SELECT file_url, thumbnail_url, status FROM pro_documents
+                   WHERE professional_id = ? AND kind = \'selfie\'
+                   ORDER BY CASE status WHEN \'approved\' THEN 0 WHEN \'pending\' THEN 1 ELSE 2 END,
+                            uploaded_at DESC
+                   LIMIT 1'
+                : 'SELECT thumbnail_url, status FROM pro_documents
+                   WHERE professional_id = ? AND kind = \'selfie\'
+                   ORDER BY CASE status WHEN \'approved\' THEN 0 WHEN \'pending\' THEN 1 ELSE 2 END,
+                            uploaded_at DESC
+                   LIMIT 1';
+            $stmt = $this->db->prepare($select);
+            $stmt->execute([$professionalId]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                return null;
+            }
+
+            $raw = '';
+            if ($hasFileUrl) {
+                $raw = trim((string) ($row['file_url'] ?? ''));
+            }
+            if ($raw === '') {
+                $raw = trim((string) ($row['thumbnail_url'] ?? ''));
+            }
+            if ($raw === '') {
+                return null;
+            }
+
+            try {
+                $s3 = new S3StorageService();
+                if ($s3->isConfigured()) {
+                    $signed = $s3->presignGetUrl($raw, 3600);
+                    if (is_string($signed) && $signed !== '') {
+                        return $signed;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+
+            return $raw;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     public function incrementJobsCompleted(int $professionalId): void
     {
         $this->db->prepare(
             'UPDATE professionals SET jobs_completed = jobs_completed + 1, updated_at = NOW() WHERE id = ?'
         )->execute([$professionalId]);
+        (new ProScoreService($this->db))->recalculate($professionalId);
     }
 
     public function incrementFreeBookingsUsed(int $professionalId): void

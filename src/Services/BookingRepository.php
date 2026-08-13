@@ -617,6 +617,8 @@ final class BookingRepository
              WHERE p.id = ?'
         )->execute([$proId]);
 
+        (new ProScoreService($this->db))->recalculate($proId);
+
         return true;
     }
 

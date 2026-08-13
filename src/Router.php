@@ -90,6 +90,7 @@ final class Router
         'POST /v1/screens/kyc-aadhaar' => KycAadhaarScreen::class,
         'POST /v1/screens/kyc-selfie' => KycSelfieScreen::class,
         'POST /v1/screens/kyc-docs' => KycDocsScreen::class,
+        'GET /v1/screens/kyc-docs' => KycDocsScreen::class,
         'GET /v1/screens/kyc-pending' => KycPendingScreen::class,
         'POST /v1/screens/kyc-pending/simulate-approval' => KycPendingScreen::class,
         'GET /v1/screens/home-jobs' => HomeJobsScreen::class,

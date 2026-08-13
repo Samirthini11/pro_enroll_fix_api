@@ -67,7 +67,7 @@ Core account for each enrolled professional. Authenticated via JWT where `sub` m
 | `rating_avg` | `DECIMAL(3,2)` | NO | `0` | Average customer rating |
 | `rating_count` | `INT UNSIGNED` | NO | `0` | Number of ratings |
 | `jobs_completed` | `INT UNSIGNED` | NO | `0` | Completed job count |
-| `pro_score` | `TINYINT UNSIGNED` | NO | `50` | Internal quality score (0–100) |
+| `pro_score` | `TINYINT UNSIGNED` | NO | `50` | Quality score 0–100 from KYC + docs + jobs + ratings (see `ProScoreService`) |
 | `created_at` | `DATETIME` | NO | — | Row created |
 | `updated_at` | `DATETIME` | NO | — | Last profile update |
 

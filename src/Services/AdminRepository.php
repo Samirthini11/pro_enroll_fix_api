@@ -349,8 +349,12 @@ final class AdminRepository
             );
         }
         $stmt->execute([$proId]);
+        $ok = $stmt->rowCount() > 0;
+        if ($ok) {
+            (new ProScoreService($this->db))->recalculate($proId);
+        }
 
-        return $stmt->rowCount() > 0;
+        return $ok;
     }
 
     public function rejectKyc(int $proId, string $reason): bool
@@ -371,7 +375,12 @@ final class AdminRepository
             $stmt->execute([$proId]);
         }
 
-        return $stmt->rowCount() > 0;
+        $ok = $stmt->rowCount() > 0;
+        if ($ok) {
+            (new ProScoreService($this->db))->recalculate($proId);
+        }
+
+        return $ok;
     }
 
     /** @return list<array<string, mixed>> */
@@ -435,14 +444,19 @@ final class AdminRepository
         if (!$this->hasProDocumentsTable()) {
             return false;
         }
+        $proId = $this->professionalIdForDocument($documentId);
         $stmt = $this->db->prepare(
             "UPDATE pro_documents
              SET status = 'approved', rejected_reason = NULL, reviewed_at = NOW()
              WHERE id = ? AND status = 'pending'"
         );
         $stmt->execute([$documentId]);
+        $ok = $stmt->rowCount() > 0;
+        if ($ok && $proId !== null) {
+            (new ProScoreService($this->db))->recalculate($proId);
+        }
 
-        return $stmt->rowCount() > 0;
+        return $ok;
     }
 
     public function rejectDocument(int $documentId, string $reason): bool
@@ -450,14 +464,30 @@ final class AdminRepository
         if (!$this->hasProDocumentsTable()) {
             return false;
         }
+        $proId = $this->professionalIdForDocument($documentId);
         $stmt = $this->db->prepare(
             "UPDATE pro_documents
              SET status = 'rejected', rejected_reason = ?, reviewed_at = NOW()
              WHERE id = ? AND status = 'pending'"
         );
         $stmt->execute([$reason, $documentId]);
+        $ok = $stmt->rowCount() > 0;
+        if ($ok && $proId !== null) {
+            (new ProScoreService($this->db))->recalculate($proId);
+        }
 
-        return $stmt->rowCount() > 0;
+        return $ok;
+    }
+
+    private function professionalIdForDocument(int $documentId): ?int
+    {
+        $stmt = $this->db->prepare(
+            'SELECT professional_id FROM pro_documents WHERE id = ? LIMIT 1'
+        );
+        $stmt->execute([$documentId]);
+        $id = $stmt->fetchColumn();
+
+        return $id === false ? null : (int) $id;
     }
 
     /** @param list<string> $documentTypes */

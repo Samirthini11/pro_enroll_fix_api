@@ -55,6 +55,8 @@ final class KycUploadService
             $uploaded['url'],
         );
 
+        (new ProScoreService($this->db))->recalculate($professionalId);
+
         return [
             'url' => $uploaded['url'],
             'key' => $uploaded['key'],
