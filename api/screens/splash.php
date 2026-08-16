@@ -29,6 +29,9 @@ final class SplashScreen extends ScreenHandler
             'supported_languages' => [
                 ['code' => 'en', 'label' => 'English', 'native_label' => 'English'],
                 ['code' => 'ta', 'label' => 'Tamil', 'native_label' => 'தமிழ்'],
+                ['code' => 'hi', 'label' => 'Hindi', 'native_label' => 'हिन्दी'],
+                ['code' => 'ml', 'label' => 'Malayalam', 'native_label' => 'മലയാളം'],
+                ['code' => 'kn', 'label' => 'Kannada', 'native_label' => 'ಕನ್ನಡ'],
             ],
             'auth' => [
                 'provider' => 'jwt_otp',
