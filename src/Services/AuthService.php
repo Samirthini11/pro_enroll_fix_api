@@ -135,6 +135,7 @@ final class AuthService
             $pro = $this->pros->upsertFromPhone($phone);
             $authUid = (string) ($pro['firebase_uid'] ?? '');
             $account = $this->auth->ensureAccount($phone, $authUid, (int) $pro['id']);
+            $this->applyReferralCodeIfPresent($request, (int) $pro['id']);
             $profile = $this->pros->profilePayload($authUid);
             $next = $this->pros->resolveNextRouteFromProfile($profile);
             if ($app === 'pro_fix') {
@@ -380,6 +381,19 @@ final class AuthService
     public function validateSession(string $sessionId): bool
     {
         return $this->auth->findActiveSession($sessionId) !== null;
+    }
+
+    private function applyReferralCodeIfPresent(Request $request, int $professionalId): void
+    {
+        $code = trim((string) $request->input('referral_code', $request->input('refer_code', '')));
+        if ($code === '') {
+            return;
+        }
+        try {
+            (new ReferralService())->applyReferralCode($professionalId, $code);
+        } catch (\Throwable) {
+            // Non-fatal — signup should still succeed.
+        }
     }
 
     /** @return array{ip: ?string, user_agent: ?string} */

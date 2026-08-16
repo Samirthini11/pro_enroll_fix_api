@@ -29,6 +29,7 @@ use ProEnroll\Api\Endpoints\Screens\HomeEarningsScreen;
 use ProEnroll\Api\Endpoints\Screens\HomeHelpScreen;
 use ProEnroll\Api\Endpoints\Screens\HomeJobsScreen;
 use ProEnroll\Api\Endpoints\Screens\HomeProfileScreen;
+use ProEnroll\Api\Endpoints\Screens\HomeReferScreen;
 use ProEnroll\Api\Endpoints\Screens\JobActiveScreen;
 use ProEnroll\Api\Endpoints\Screens\JobOfferScreen;
 use ProEnroll\Api\Endpoints\Screens\KycAadhaarScreen;
@@ -99,6 +100,8 @@ final class Router
         'GET /v1/screens/home-profile' => HomeProfileScreen::class,
         'PUT /v1/screens/home-profile' => HomeProfileScreen::class,
         'POST /v1/screens/home-profile' => HomeProfileScreen::class,
+        'GET /v1/screens/home-refer' => HomeReferScreen::class,
+        'POST /v1/screens/home-refer' => HomeReferScreen::class,
         'GET /v1/screens/home-help' => HomeHelpScreen::class,
         'POST /v1/screens/home-help/experience-edit-request' => HomeHelpScreen::class,
         'GET /v1/screens/job-active' => JobActiveScreen::class,

@@ -1109,8 +1109,7 @@ final class BookingRepository
         $settings = new PlatformSettingsRepository();
         $min = $settings->walletMinAcceptPaise();
         $balance = $this->netWalletPaise($professionalId);
-        $used = $this->freeBookingsUsed($professionalId);
-        $remaining = max(0, $settings->freeBookingLimit() - $used);
+        $remaining = $this->freeBookingsRemaining($professionalId);
 
         if ($remaining > 0) {
             return [
@@ -1671,7 +1670,8 @@ final class BookingRepository
         $percent = $settings->visitCommissionPercent();
         $visitFee = (int) ($row['visit_fee_paise'] ?? 0);
         $completed = $this->completedJobsCount($professionalId);
-        $isFree = $completed < $freeLimit;
+        $bonus = (new ReferralService())->bonusFreeBookings($professionalId);
+        $isFree = $completed < $freeLimit || $bonus > 0;
         $commission = 0;
         if (!$isFree && $percent > 0 && $visitFee > 0) {
             $commission = (int) round($visitFee * $percent / 100);
@@ -1951,13 +1951,16 @@ final class BookingRepository
         // Visit fee stays with pro as earnings; platform fee is deducted from prepaid wallet.
         $gross = ($final !== null && $final >= 100) ? $final : $visitFee;
 
-        // Free tier is based on completed jobs; this booking may already be completed.
+        // Free tier is based on completed jobs + referral bonus free bookings.
         $completed = $this->completedJobsCount($professionalId);
         $status = (string) ($row['status'] ?? '');
         $freeUsedBefore = $status === 'completed'
             ? max(0, $completed - 1)
             : $completed;
-        $isFree = $freeUsedBefore < $freeLimit;
+        $referrals = new ReferralService();
+        $bonus = $referrals->bonusFreeBookings($professionalId);
+        $isFree = $freeUsedBefore < $freeLimit || $bonus > 0;
+        $usedBonus = $isFree && $freeUsedBefore >= $freeLimit && $bonus > 0;
         $commission = 0;
         if (!$isFree && $percent > 0 && $visitFee > 0) {
             $commission = (int) round($visitFee * $percent / 100);
@@ -1999,7 +2002,18 @@ final class BookingRepository
         $pros = new ProRepository();
         $pros->incrementJobsCompleted($professionalId);
         if ($isFree && $this->hasProFreeTierColumns()) {
-            $pros->incrementFreeBookingsUsed($professionalId);
+            if ($usedBonus) {
+                $referrals->consumeBonusFreeBooking($professionalId);
+            } else {
+                $pros->incrementFreeBookingsUsed($professionalId);
+            }
+        }
+
+        // Refer & Earn: referred pro's first completed job → referrer +1 free job.
+        try {
+            $referrals->onReferredProJobSettled($professionalId);
+        } catch (\Throwable) {
+            // Non-fatal — settle already succeeded.
         }
 
         // Hold when prepaid wallet drops below min after free tier.
@@ -2066,13 +2080,26 @@ final class BookingRepository
         return min($completed, $limit);
     }
 
+    /** Standard free tier remaining + referral bonus free bookings. */
+    public function freeBookingsRemaining(int $professionalId): int
+    {
+        $settings = new PlatformSettingsRepository();
+        $limit = $settings->freeBookingLimit();
+        $used = $this->freeBookingsUsed($professionalId);
+        $base = max(0, $limit - $used);
+        $bonus = (new ReferralService())->bonusFreeBookings($professionalId);
+
+        return $base + $bonus;
+    }
+
     /** @return array<string, mixed> */
     public function commissionMetaForProfessional(int $professionalId): array
     {
         $settings = new PlatformSettingsRepository();
         $limit = $settings->freeBookingLimit();
         $used = $this->freeBookingsUsed($professionalId);
-        $remaining = max(0, $limit - $used);
+        $bonus = (new ReferralService())->bonusFreeBookings($professionalId);
+        $remaining = max(0, $limit - $used) + $bonus;
         $pro = (new ProRepository())->findById($professionalId);
         $feeDue = $this->platformFeeDuePaise($professionalId);
         $prepaid = $this->netWalletPaise($professionalId);
@@ -2086,6 +2113,7 @@ final class BookingRepository
         return array_merge($settings->publicPayload(), [
             'free_bookings_used' => $used,
             'free_bookings_remaining' => $remaining,
+            'bonus_free_bookings' => $bonus,
             'listing_held' => (bool) ($pro['listing_held'] ?? false),
             'platform_fee_due_paise' => $feeDue,
             'wallet_balance_paise' => $prepaid,
@@ -2100,15 +2128,14 @@ final class BookingRepository
             ),
             'commission_note' => $remaining > 0
                 ? sprintf(
-                    'First %d jobs free (%d left). After that keep min ₹%d in wallet; %d%% of visit fee is deducted per job. Recharge via company UPI %s.',
-                    $limit,
+                    'Free jobs left: %d (includes referral bonuses). After that keep min ₹%d in wallet; %d%% of visit fee is deducted per job. Recharge via company UPI %s.',
                     $remaining,
                     (int) round($min / 100),
                     $settings->visitCommissionPercent(),
                     $upi,
                 )
                 : sprintf(
-                    'Keep min ₹%d in wallet. Each job deducts %d%% of visit fee. Recharge via company UPI %s.',
+                    'Keep min ₹%d in wallet. Each job deducts %d%% of visit fee. Recharge via company UPI %s. Refer friends from Profile → Refer & Earn for free jobs.',
                     (int) round($min / 100),
                     $settings->visitCommissionPercent(),
                     $upi,
@@ -2362,9 +2389,7 @@ final class BookingRepository
     private function commissionPreviewForPro(int $professionalId, int $visitFeePaise): array
     {
         $settings = new PlatformSettingsRepository();
-        $limit = $settings->freeBookingLimit();
-        $used = $this->freeBookingsUsed($professionalId);
-        $remaining = max(0, $limit - $used);
+        $remaining = $this->freeBookingsRemaining($professionalId);
         $percent = $settings->visitCommissionPercent();
         $isFree = $remaining > 0;
         $commission = $isFree ? 0 : (int) round($visitFeePaise * $percent / 100);

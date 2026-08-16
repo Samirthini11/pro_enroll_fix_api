@@ -87,6 +87,10 @@ final class HomeHelpScreen extends ScreenHandler
                     . "Tip: finish KYC, upload supporting docs, complete jobs, and collect good ratings to reach 70+ (strong profile).",
             ],
             [
+                'q' => 'What is Refer & Earn?',
+                'a' => 'Share your referral code from Profile → Refer & Earn. When a new pro installs, applies your code, and completes 1 customer job, you get +1 free job (no platform fee on that job).',
+            ],
+            [
                 'q' => 'When do I get paid?',
                 'a' => 'Visit fees are paid out daily by 7 PM to your UPI / bank details on Profile.',
             ],
