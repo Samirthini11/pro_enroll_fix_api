@@ -98,6 +98,7 @@ final class Router
         'POST /v1/screens/home-earnings' => HomeEarningsScreen::class,
         'GET /v1/screens/home-profile' => HomeProfileScreen::class,
         'PUT /v1/screens/home-profile' => HomeProfileScreen::class,
+        'POST /v1/screens/home-profile' => HomeProfileScreen::class,
         'GET /v1/screens/home-help' => HomeHelpScreen::class,
         'POST /v1/screens/home-help/experience-edit-request' => HomeHelpScreen::class,
         'GET /v1/screens/job-active' => JobActiveScreen::class,

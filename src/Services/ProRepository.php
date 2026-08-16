@@ -885,12 +885,23 @@ final class ProRepository
     }
 
     /**
-     * KYC selfie (or approved selfie doc) used as the pro's profile photo.
+     * Prefer uploaded profile photo; fall back to KYC selfie.
      * Returns a viewable URL (presigned when S3 is private).
      */
     public function resolveProfilePhotoUrl(int $professionalId): ?string
     {
         try {
+            if ($this->ensureProfilePhotoColumn()) {
+                $stmt = $this->db->prepare(
+                    'SELECT profile_photo_url FROM professionals WHERE id = ? LIMIT 1'
+                );
+                $stmt->execute([$professionalId]);
+                $stored = trim((string) ($stmt->fetchColumn() ?: ''));
+                if ($stored !== '') {
+                    return $this->viewableUrl($stored);
+                }
+            }
+
             $hasFileUrl = false;
             try {
                 $col = $this->db->query("SHOW COLUMNS FROM pro_documents LIKE 'file_url'");
@@ -899,19 +910,19 @@ final class ProRepository
             }
 
             $select = $hasFileUrl
-                ? 'SELECT file_url, thumbnail_url, status FROM pro_documents
+                ? 'SELECT file_url, thumbnail_url FROM pro_documents
                    WHERE professional_id = ? AND kind = \'selfie\'
                    ORDER BY CASE status WHEN \'approved\' THEN 0 WHEN \'pending\' THEN 1 ELSE 2 END,
                             uploaded_at DESC
                    LIMIT 1'
-                : 'SELECT thumbnail_url, status FROM pro_documents
+                : 'SELECT thumbnail_url FROM pro_documents
                    WHERE professional_id = ? AND kind = \'selfie\'
                    ORDER BY CASE status WHEN \'approved\' THEN 0 WHEN \'pending\' THEN 1 ELSE 2 END,
                             uploaded_at DESC
                    LIMIT 1';
-            $stmt = $this->db->prepare($select);
-            $stmt->execute([$professionalId]);
-            $row = $stmt->fetch();
+            $doc = $this->db->prepare($select);
+            $doc->execute([$professionalId]);
+            $row = $doc->fetch();
             if (!$row) {
                 return null;
             }
@@ -927,20 +938,62 @@ final class ProRepository
                 return null;
             }
 
-            try {
-                $s3 = new S3StorageService();
-                if ($s3->isConfigured()) {
-                    $signed = $s3->presignGetUrl($raw, 3600);
-                    if (is_string($signed) && $signed !== '') {
-                        return $signed;
-                    }
-                }
-            } catch (\Throwable) {
-            }
-
-            return $raw;
+            return $this->viewableUrl($raw);
         } catch (\Throwable) {
             return null;
+        }
+    }
+
+    public function setProfilePhotoUrl(int $professionalId, string $url): void
+    {
+        if (!$this->ensureProfilePhotoColumn()) {
+            throw new \RuntimeException('profile_photo_url column is not available');
+        }
+        $this->db->prepare(
+            'UPDATE professionals
+             SET profile_photo_url = ?, updated_at = NOW()
+             WHERE id = ?'
+        )->execute([trim($url), $professionalId]);
+    }
+
+    private function viewableUrl(string $raw): string
+    {
+        try {
+            $s3 = new S3StorageService();
+            if ($s3->isConfigured()) {
+                $signed = $s3->presignGetUrl($raw, 3600);
+                if (is_string($signed) && $signed !== '') {
+                    return $signed;
+                }
+            }
+        } catch (\Throwable) {
+        }
+
+        return $raw;
+    }
+
+    private static ?bool $hasProfilePhotoColumn = null;
+
+    private function ensureProfilePhotoColumn(): bool
+    {
+        if (self::$hasProfilePhotoColumn !== null) {
+            return self::$hasProfilePhotoColumn;
+        }
+        try {
+            $stmt = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'profile_photo_url'");
+            if ($stmt && $stmt->fetch()) {
+                self::$hasProfilePhotoColumn = true;
+                return true;
+            }
+            $this->db->exec(
+                'ALTER TABLE professionals
+                 ADD COLUMN profile_photo_url VARCHAR(1024) NULL AFTER face_match_score'
+            );
+            self::$hasProfilePhotoColumn = true;
+            return true;
+        } catch (\Throwable) {
+            self::$hasProfilePhotoColumn = false;
+            return false;
         }
     }
 

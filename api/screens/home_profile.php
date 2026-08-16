@@ -8,11 +8,13 @@ use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Services\BookingRepository;
+use ProEnroll\Api\Services\S3StorageService;
 
 /**
  * Flutter: ProfileTab
- * GET /v1/screens/home-profile
- * PUT /v1/screens/home-profile
+ * GET  /v1/screens/home-profile
+ * PUT  /v1/screens/home-profile
+ * POST /v1/screens/home-profile  { "action": "upload_photo", "image_base64": "...", "content_type": "image/jpeg" }
  */
 final class HomeProfileScreen extends ScreenHandler
 {
@@ -26,12 +28,55 @@ final class HomeProfileScreen extends ScreenHandler
         $pro = $this->ensurePro($request);
 
         if ($request->method === 'GET') {
-            // Self-heal stale holds after an approved wallet recharge.
             (new BookingRepository())->syncListingHoldForWallet((int) $pro['id']);
-            // Presence heartbeat when Jobs screen refreshes while online.
             $this->pros->touchPresence($uid);
             Response::ok([
                 'screen' => 'home_profile',
+                'profile' => $this->pros->profilePayload($uid),
+            ]);
+            return;
+        }
+
+        if ($request->method === 'POST') {
+            $action = strtolower(trim((string) $request->input('action', 'upload_photo')));
+            if ($action !== 'upload_photo') {
+                Response::fail('Unknown action', 422, 'validation');
+                return;
+            }
+
+            try {
+                $s3 = new S3StorageService();
+                if (!$s3->isConfigured()) {
+                    throw new \RuntimeException(
+                        'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET in .env'
+                    );
+                }
+                [$binary, $contentType, $ext] = $this->decodeProfileImage(
+                    (string) $request->input('image_base64', ''),
+                    $request->input('content_type') !== null
+                        ? (string) $request->input('content_type')
+                        : null,
+                );
+                $uploaded = $s3->putKycImage(
+                    (int) $pro['id'],
+                    'profile',
+                    $binary,
+                    $contentType,
+                    $ext,
+                );
+                $this->pros->setProfilePhotoUrl((int) $pro['id'], $uploaded['url']);
+            } catch (\InvalidArgumentException $e) {
+                Response::fail($e->getMessage(), 422, 'validation');
+                return;
+            } catch (\Throwable $e) {
+                Response::fail($e->getMessage(), 500, 'profile_photo_upload_failed');
+                return;
+            }
+
+            Response::ok([
+                'screen' => 'home_profile',
+                'uploaded' => true,
+                'profile_photo_url' => $this->pros->resolveProfilePhotoUrl((int) $pro['id']),
                 'profile' => $this->pros->profilePayload($uid),
             ]);
             return;
@@ -62,7 +107,6 @@ final class HomeProfileScreen extends ScreenHandler
                 $fields['is_available'] = $wantOnline ? 1 : 0;
             }
 
-            // Presence heartbeat while online (keeps pro in customer search).
             $heartbeat = !empty($request->body['heartbeat'])
                 || !empty($request->body['presence']);
             if ($heartbeat && $fields === []) {
@@ -89,5 +133,48 @@ final class HomeProfileScreen extends ScreenHandler
         }
 
         Response::fail('Method not allowed', 405);
+    }
+
+    /**
+     * @return array{0: string, 1: string, 2: string} binary, contentType, ext
+     */
+    private function decodeProfileImage(string $raw, ?string $contentType): array
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            throw new \InvalidArgumentException('image_base64 is required');
+        }
+
+        $type = $contentType;
+        if (preg_match('#^data:([^;]+);base64,(.+)$#s', $raw, $m)) {
+            $type = $type ?: $m[1];
+            $raw = $m[2];
+        }
+
+        $binary = base64_decode($raw, true);
+        if ($binary === false || $binary === '') {
+            throw new \InvalidArgumentException('Invalid image_base64');
+        }
+
+        $type = strtolower(trim((string) ($type ?: 'image/jpeg')));
+        $allowed = [
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+        ];
+        if (!isset($allowed[$type])) {
+            if (str_starts_with($binary, "\xFF\xD8\xFF")) {
+                $type = 'image/jpeg';
+            } elseif (str_starts_with($binary, "\x89PNG")) {
+                $type = 'image/png';
+            } else {
+                throw new \InvalidArgumentException('Unsupported file type. Use JPEG, PNG, or WEBP.');
+            }
+        }
+
+        $resolved = $type === 'image/jpg' ? 'image/jpeg' : $type;
+
+        return [$binary, $resolved, $allowed[$resolved] ?? 'jpg'];
     }
 }
