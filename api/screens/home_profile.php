@@ -8,6 +8,7 @@ use ProEnroll\Api\Endpoints\ScreenHandler;
 use ProEnroll\Api\Http\Request;
 use ProEnroll\Api\Http\Response;
 use ProEnroll\Api\Services\BookingRepository;
+use ProEnroll\Api\Services\ReferralService;
 use ProEnroll\Api\Services\S3StorageService;
 
 /**
@@ -30,15 +31,38 @@ final class HomeProfileScreen extends ScreenHandler
         if ($request->method === 'GET') {
             (new BookingRepository())->syncListingHoldForWallet((int) $pro['id']);
             $this->pros->touchPresence($uid);
+            $refer = [];
+            try {
+                $refer = (new ReferralService())->payloadForProfessional((int) $pro['id']);
+            } catch (\Throwable) {
+                $refer = [];
+            }
             Response::ok([
                 'screen' => 'home_profile',
                 'profile' => $this->pros->profilePayload($uid),
+                'refer' => $refer,
             ]);
             return;
         }
 
         if ($request->method === 'POST') {
             $action = strtolower(trim((string) $request->input('action', 'upload_photo')));
+            if ($action === 'apply_referral' || $action === 'apply') {
+                $code = (string) $request->input('referral_code', $request->input('code', ''));
+                $result = (new ReferralService())->applyReferralCode((int) $pro['id'], $code);
+                if (!$result['ok']) {
+                    Response::fail($result['message'], 422, 'referral_apply_failed');
+                    return;
+                }
+                Response::ok([
+                    'screen' => 'home_profile',
+                    'applied' => true,
+                    'message' => $result['message'],
+                    'refer' => (new ReferralService())->payloadForProfessional((int) $pro['id']),
+                    'profile' => $this->pros->profilePayload($uid),
+                ]);
+                return;
+            }
             if ($action !== 'upload_photo') {
                 Response::fail('Unknown action', 422, 'validation');
                 return;

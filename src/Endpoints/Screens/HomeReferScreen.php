@@ -22,41 +22,49 @@ final class HomeReferScreen extends ScreenHandler
             return;
         }
 
-        $pro = $this->ensurePro($request);
-        $proId = (int) $pro['id'];
-        $referrals = new ReferralService();
+        try {
+            $pro = $this->ensurePro($request);
+            $proId = (int) $pro['id'];
+            $referrals = new ReferralService();
 
-        if ($request->method === 'GET') {
-            Response::ok([
-                'screen' => 'home_refer',
-                'refer' => $referrals->payloadForProfessional($proId),
-            ]);
-            return;
-        }
-
-        if ($request->method === 'POST') {
-            $action = strtolower(trim((string) $request->input('action', 'apply')));
-            if ($action !== 'apply') {
-                Response::fail('Unknown action', 422, 'validation');
+            if ($request->method === 'GET') {
+                Response::ok([
+                    'screen' => 'home_refer',
+                    'refer' => $referrals->payloadForProfessional($proId),
+                ]);
                 return;
             }
 
-            $code = (string) $request->input('referral_code', $request->input('code', ''));
-            $result = $referrals->applyReferralCode($proId, $code);
-            if (!$result['ok']) {
-                Response::fail($result['message'], 422, 'referral_apply_failed');
+            if ($request->method === 'POST') {
+                $action = strtolower(trim((string) $request->input('action', 'apply')));
+                if ($action !== 'apply') {
+                    Response::fail('Unknown action', 422, 'validation');
+                    return;
+                }
+
+                $code = (string) $request->input('referral_code', $request->input('code', ''));
+                $result = $referrals->applyReferralCode($proId, $code);
+                if (!$result['ok']) {
+                    Response::fail($result['message'], 422, 'referral_apply_failed');
+                    return;
+                }
+
+                Response::ok([
+                    'screen' => 'home_refer',
+                    'applied' => true,
+                    'message' => $result['message'],
+                    'refer' => $referrals->payloadForProfessional($proId),
+                ]);
                 return;
             }
 
-            Response::ok([
-                'screen' => 'home_refer',
-                'applied' => true,
-                'message' => $result['message'],
-                'refer' => $referrals->payloadForProfessional($proId),
-            ]);
-            return;
+            Response::fail('Method not allowed', 405, 'method_not_allowed');
+        } catch (\Throwable $e) {
+            Response::fail(
+                $e->getMessage() !== '' ? $e->getMessage() : 'Could not load Refer & Earn',
+                500,
+                'refer_failed',
+            );
         }
-
-        Response::fail('Method not allowed', 405, 'method_not_allowed');
     }
 }

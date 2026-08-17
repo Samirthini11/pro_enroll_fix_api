@@ -32,32 +32,21 @@ final class ReferralService
         }
 
         try {
-            $col = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'referral_code'");
-            if (!$col || !$col->fetch()) {
-                $this->db->exec(
-                    'ALTER TABLE professionals
-                     ADD COLUMN referral_code VARCHAR(16) NULL,
-                     ADD COLUMN referred_by_professional_id INT UNSIGNED NULL,
-                     ADD COLUMN bonus_free_bookings INT UNSIGNED NOT NULL DEFAULT 0'
-                );
-            } else {
-                $bonus = $this->db->query("SHOW COLUMNS FROM professionals LIKE 'bonus_free_bookings'");
-                if (!$bonus || !$bonus->fetch()) {
-                    $this->db->exec(
-                        'ALTER TABLE professionals
-                         ADD COLUMN bonus_free_bookings INT UNSIGNED NOT NULL DEFAULT 0'
-                    );
-                }
-                $refBy = $this->db->query(
-                    "SHOW COLUMNS FROM professionals LIKE 'referred_by_professional_id'"
-                );
-                if (!$refBy || !$refBy->fetch()) {
-                    $this->db->exec(
-                        'ALTER TABLE professionals
-                         ADD COLUMN referred_by_professional_id INT UNSIGNED NULL'
-                    );
-                }
-            }
+            $this->addColumnIfMissing(
+                'professionals',
+                'referral_code',
+                'VARCHAR(16) NULL'
+            );
+            $this->addColumnIfMissing(
+                'professionals',
+                'referred_by_professional_id',
+                'INT UNSIGNED NULL'
+            );
+            $this->addColumnIfMissing(
+                'professionals',
+                'bonus_free_bookings',
+                'INT UNSIGNED NOT NULL DEFAULT 0'
+            );
 
             $this->db->exec(
                 "CREATE TABLE IF NOT EXISTS pro_referrals (
@@ -91,6 +80,15 @@ final class ReferralService
             self::$schemaReady = false;
             return false;
         }
+    }
+
+    private function addColumnIfMissing(string $table, string $column, string $definition): void
+    {
+        $col = $this->db->query("SHOW COLUMNS FROM {$table} LIKE " . $this->db->quote($column));
+        if ($col && $col->fetch()) {
+            return;
+        }
+        $this->db->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
     }
 
     public function ensureReferralCode(int $professionalId): string
@@ -352,11 +350,16 @@ final class ReferralService
             $pending = (int) ($stats['pending'] ?? 0);
         }
 
-        $me = $this->db->prepare(
-            'SELECT referred_by_professional_id FROM professionals WHERE id = ? LIMIT 1'
-        );
-        $me->execute([$professionalId]);
-        $referredBy = $me->fetchColumn();
+        $referredBy = null;
+        try {
+            $me = $this->db->prepare(
+                'SELECT referred_by_professional_id FROM professionals WHERE id = ? LIMIT 1'
+            );
+            $me->execute([$professionalId]);
+            $referredBy = $me->fetchColumn();
+        } catch (\Throwable) {
+            $referredBy = null;
+        }
 
         $shareText = $code === ''
             ? 'Join Pro-Enroll — get verified, get local jobs, get paid daily.'

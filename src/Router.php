@@ -139,7 +139,16 @@ final class Router
         $key = $request->method . ' ' . $request->path;
 
         if (isset(self::ROUTES[$key])) {
-            $handler = new (self::ROUTES[$key])();
+            $handlerClass = self::ROUTES[$key];
+            if ($handlerClass === HomeReferScreen::class
+                && !class_exists($handlerClass, false)
+            ) {
+                $referFile = dirname(__DIR__) . '/src/Endpoints/Screens/HomeReferScreen.php';
+                if (is_file($referFile)) {
+                    require_once $referFile;
+                }
+            }
+            $handler = new $handlerClass();
             $handler->handle($request);
             return;
         }
