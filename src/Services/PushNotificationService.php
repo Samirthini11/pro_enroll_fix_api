@@ -410,6 +410,60 @@ final class PushNotificationService
         );
     }
 
+    public function notifyJobChat(
+        array $booking,
+        string $senderRole,
+        string $preview,
+        string $senderName = '',
+    ): int {
+        $bookingId = (string) ($booking['id'] ?? '');
+        $text = trim($preview);
+        if (mb_strlen($text) > 120) {
+            $text = mb_substr($text, 0, 117) . '…';
+        }
+        if ($text === '') {
+            $text = 'New message';
+        }
+
+        if ($senderRole === 'customer') {
+            $pro = $this->proForBooking($booking);
+            if ($pro === null) {
+                return 0;
+            }
+            $tokens = $this->professionalTokens($pro);
+            $from = trim($senderName) !== ''
+                ? trim($senderName)
+                : (trim((string) ($booking['customer_name'] ?? '')) ?: 'Customer');
+            return $this->sendToTokens(
+                $tokens,
+                $from,
+                $text,
+                [
+                    'type' => 'job_chat',
+                    'audience' => 'professional',
+                    'booking_id' => $bookingId,
+                    'route' => '/job/chat',
+                ],
+            );
+        }
+
+        $tokens = $this->customerTokensForBooking($booking);
+        $from = trim($senderName) !== ''
+            ? trim($senderName)
+            : (trim((string) ($booking['pro_name'] ?? '')) ?: 'Technician');
+        return $this->sendToTokens(
+            $tokens,
+            $from,
+            $text,
+            [
+                'type' => 'job_chat',
+                'audience' => 'customer',
+                'booking_id' => $bookingId,
+                'route' => '/job/chat',
+            ],
+        );
+    }
+
     public function notifyCustomerBookingCompleted(array $booking, ?array $pro = null, ?int $finalAmountPaise = null): int
     {
         $pro ??= $this->proForBooking($booking);

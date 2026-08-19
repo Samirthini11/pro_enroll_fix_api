@@ -142,7 +142,11 @@ final class BookingRepository
             $stmt->execute(['cancelled', $bookingId, $customerId, $status]);
         }
 
-        return $stmt->rowCount() > 0;
+        if ($stmt->rowCount() > 0) {
+            $this->clearJobChat($bookingId);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -580,6 +584,7 @@ final class BookingRepository
                 continue;
             }
             $this->settleCommissionAndCredit($bookingId, $professionalId);
+            $this->clearJobChat($bookingId);
             $done++;
         }
 
@@ -1214,6 +1219,8 @@ final class BookingRepository
             return false;
         }
 
+        $this->clearJobChat($bookingId);
+
         // Charge the wallet penalty for rejecting after heading out.
         if ($isLateReject) {
             $penalty = $this->lateRejectPenaltyPaise($booking);
@@ -1430,6 +1437,7 @@ final class BookingRepository
         }
 
         $this->settleCommissionAndCredit($bookingId, $professionalId);
+        $this->clearJobChat($bookingId);
 
         return $this->findById($bookingId);
     }
@@ -1919,6 +1927,7 @@ final class BookingRepository
         }
 
         $this->settleCommissionAndCredit($bookingId, (int) $booking['professional_id']);
+        $this->clearJobChat($bookingId);
 
         return $this->findByIdForCustomer($bookingId, $customerId);
     }
@@ -2751,5 +2760,17 @@ final class BookingRepository
         }
 
         return self::$hasCancelledByColumns;
+    }
+
+    private function clearJobChat(int $bookingId): void
+    {
+        if ($bookingId < 1) {
+            return;
+        }
+        try {
+            (new JobChatService($this->db))->clearForBooking($bookingId);
+        } catch (\Throwable $e) {
+            error_log('clearJobChat: ' . $e->getMessage());
+        }
     }
 }

@@ -96,6 +96,23 @@ final class BookingPushNotifier
         );
     }
 
+    public static function jobChat(
+        array $booking,
+        string $senderRole,
+        string $preview,
+        string $senderName = '',
+    ): void {
+        self::safe(
+            static fn () => (new PushNotificationService())->notifyJobChat(
+                $booking,
+                $senderRole,
+                $preview,
+                $senderName,
+            ),
+            'job_chat',
+        );
+    }
+
     /** @param callable(): int $fn */
     private static function safe(callable $fn, string $label = 'push'): void
     {

@@ -52,6 +52,7 @@ use ProEnroll\Api\Endpoints\Customer\ProfileEndpoint;
 use ProEnroll\Api\Endpoints\Customer\ProsSearchEndpoint;
 use ProEnroll\Api\Endpoints\Device\PushHealthEndpoint;
 use ProEnroll\Api\Endpoints\Device\PushTestEndpoint;
+use ProEnroll\Api\Endpoints\Job\JobChatEndpoint;
 use ProEnroll\Api\Endpoints\Device\PushTokenEndpoint;
 use ProEnroll\Api\Endpoints\Screens\SplashScreen;
 use ProEnroll\Api\Http\Request;
@@ -190,6 +191,11 @@ final class Router
 
         if (preg_match('#^POST /v1/customer/bookings/(\d+)/rating$#', $key, $m)) {
             (new BookingDetailEndpoint())->handle($request, (int) $m[1]);
+            return;
+        }
+
+        if (preg_match('#^(GET|POST) /v1/bookings/(\d+)/chat$#', $key, $m)) {
+            (new JobChatEndpoint())->handle($request, (int) $m[2]);
             return;
         }
 
