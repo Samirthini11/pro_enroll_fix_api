@@ -24,7 +24,11 @@ VALUES
     ('fridge', 'Fridge Repair', 'குளிர்சாதனப் பழுதுபார்ப்பு', 'kitchen', 20000, 20000, 5),
     ('wash', 'Washing Machine', 'சலவை இயந்திரம்', 'local_laundry_service', 20000, 20000, 6),
     ('car', 'Car Mechanic', 'கார் மெக்கானிக்', 'directions_car', 25000, 25000, 7),
-    ('bike', 'Bike Mechanic', 'பைக் மெக்கானிக்', 'two_wheeler', 15000, 15000, 8)
+    ('bike', 'Bike Mechanic', 'பைக் மெக்கானிக்', 'two_wheeler', 15000, 15000, 8),
+    ('puncture', 'Puncture / Tyre', 'பஞ்சர் / டயர்', 'tire_repair', 15000, 15000, 9),
+    ('chimney', 'Chimney / Hob', 'சிம்னி / ஹாப்', 'countertops', 20000, 20000, 10),
+    ('sofa', 'Sofa / Furniture Repair', 'சோபா / மரச்சாமான் பழுது', 'weekend', 20000, 20000, 11),
+    ('jumpstart', 'Battery Jump-start', 'பேட்டரி ஜம்ப் ஸ்டார்ட்', 'battery_charging_full', 15000, 15000, 12)
 ON DUPLICATE KEY UPDATE
     name_en = VALUES(name_en),
     name_ta = VALUES(name_ta),

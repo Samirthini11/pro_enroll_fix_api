@@ -25,6 +25,10 @@ final class ReferenceData
             ['code' => 'wash', 'name_en' => 'Washing Machine', 'name_ta' => 'சலவை இயந்திரம்', 'icon_key' => 'local_laundry_service', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 6],
             ['code' => 'car', 'name_en' => 'Car Mechanic', 'name_ta' => 'கார் மெக்கானிக்', 'icon_key' => 'directions_car', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 7],
             ['code' => 'bike', 'name_en' => 'Bike Mechanic', 'name_ta' => 'பைக் மெக்கானிக்', 'icon_key' => 'two_wheeler', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 8],
+            ['code' => 'puncture', 'name_en' => 'Puncture / Tyre', 'name_ta' => 'பஞ்சர் / டயர்', 'icon_key' => 'tire_repair', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 9],
+            ['code' => 'chimney', 'name_en' => 'Chimney / Hob', 'name_ta' => 'சிம்னி / ஹாப்', 'icon_key' => 'countertops', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 10],
+            ['code' => 'sofa', 'name_en' => 'Sofa / Furniture Repair', 'name_ta' => 'சோபா / மரச்சாமான் பழுது', 'icon_key' => 'weekend', 'default_visit_fee_paise' => 20000, 'base_price_paise' => 20000, 'sort_order' => 11],
+            ['code' => 'jumpstart', 'name_en' => 'Battery Jump-start', 'name_ta' => 'பேட்டரி ஜம்ப் ஸ்டார்ட்', 'icon_key' => 'battery_charging_full', 'default_visit_fee_paise' => 15000, 'base_price_paise' => 15000, 'sort_order' => 12],
         ];
     }
 
